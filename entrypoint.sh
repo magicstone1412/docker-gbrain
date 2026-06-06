@@ -11,5 +11,8 @@ echo "Postgres ready!"
 echo "Initializing brain..."
 printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" --no-embedding || true
 
+echo "Starting background sync..."
+gbrain sync --watch --repo /data/brain &
+
 echo "Starting MCP server..."
 exec gbrain serve --http --port 7333 --bind 0.0.0.0
