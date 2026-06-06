@@ -11,6 +11,9 @@ echo "Postgres ready!"
 echo "Initializing brain..."
 printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" --no-embedding || true
 
+echo "Configuring brain repo..."
+gbrain sources add default --path /data/brain 2>/dev/null || true
+
 echo "Starting background sync..."
 gbrain sync --watch --repo /data/brain &
 
