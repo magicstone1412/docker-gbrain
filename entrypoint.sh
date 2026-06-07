@@ -27,8 +27,6 @@ done
 
 # ---------------------------------------------------------------------------
 # 3. Detect whether gbrain has already been initialized
-#    We check for a schema marker in Postgres (the 'pages' table).
-#    If already initialized, skip --embedding-model to avoid dimension mismatch.
 # ---------------------------------------------------------------------------
 ALREADY_INITIALIZED=false
 if psql "$DATABASE_URL" -c "\dt pages" 2>/dev/null | grep -q "pages"; then
@@ -37,10 +35,6 @@ fi
 
 # ---------------------------------------------------------------------------
 # 4. Initialize brain
-#    First run:   pick embedding provider from env vars (or --no-embedding).
-#    Subsequent:  run init without --embedding-model so the stored schema is
-#                 preserved. Changing embedding provider after first init
-#                 requires a manual `gbrain embed --stale` — see README.
 # ---------------------------------------------------------------------------
 if [ "$ALREADY_INITIALIZED" = "true" ]; then
   echo "Brain already initialized — skipping embedding provider selection."
@@ -67,7 +61,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Ensure /data/brain is a Git repo
+# 5. Ensure /data/brain is a Git repo with git config
 # ---------------------------------------------------------------------------
 echo "Configuring brain repo..."
 if [ ! -d /data/brain/.git ]; then
@@ -77,6 +71,10 @@ if [ ! -d /data/brain/.git ]; then
   git config user.name "GBrain"
   git commit --allow-empty -m "init brain repo"
   cd /app
+else
+  # Ensure git config exists even after volume remount
+  git -C /data/brain config user.email "gbrain@local" || true
+  git -C /data/brain config user.name "GBrain" || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -87,13 +85,33 @@ psql "$DATABASE_URL" -c \
   2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 7. Background sync
+# 7. Auto-commit watcher
+#    Watches /data/brain every 30s. If there are new or modified files,
+#    commits them so gbrain sync can pick them up automatically.
 # ---------------------------------------------------------------------------
-echo "Starting background sync..."
-gbrain sync --watch --interval 60 --repo /data/brain &
+echo "Starting auto-commit watcher..."
+(while true; do
+  sleep 30
+  cd /data/brain
+  if [ -n "$(git status --porcelain)" ]; then
+    git add .
+    git commit -m "auto: $(date '+%Y-%m-%d %H:%M:%S')" \
+      && echo "[auto-commit] changes committed"
+  fi
+done) &
 
 # ---------------------------------------------------------------------------
-# 8. Start MCP server (foreground / PID 1)
+# 8. Background sync (with auto-restart on crash)
+# ---------------------------------------------------------------------------
+echo "Starting background sync..."
+(while true; do
+  gbrain sync --watch --interval 60 --repo /data/brain
+  echo "[sync] exited unexpectedly, restarting in 5s..."
+  sleep 5
+done) &
+
+# ---------------------------------------------------------------------------
+# 9. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
 echo "Starting MCP server..."
 exec gbrain serve --http --port 7333 --bind 0.0.0.0
