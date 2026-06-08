@@ -7,17 +7,20 @@ The image builds `gbrain` from source, initializes it against a Postgres databas
 ## What This Image Does
 
 - Uses `oven/bun:latest` as the base image.
-- Installs `git`, `netcat-openbsd`, and `postgresql-client`.
+- Installs `git`, `netcat-openbsd`, `postgresql-client`, and `jq`.
 - Clones `https://github.com/garrytan/gbrain` into `/app`.
 - Runs `bun install` and `bun link`.
 - Creates `/data/brain` as the persistent brain repository.
 - Waits for a Postgres host named `gbrain-postgres` on port `5432`.
 - Detects which embedding provider to use from environment variables.
 - Runs `gbrain init --supabase` with the appropriate embedding flag.
-- Stores all provided API keys into `~/.gbrain/config.json` via `gbrain config set`.
+- Lets `gbrain` read API keys directly from environment variables.
+- Patches `~/.gbrain/config.json` after init so the selected embedding model/dimensions persist.
 - Initializes `/data/brain` as a Git repository if needed.
 - Updates the default source path in Postgres to `/data/brain`.
-- Starts `gbrain sync --watch` in the background.
+- Starts an auto-commit watcher for `/data/brain`.
+- Runs a background sync/embed loop on a configurable interval.
+- Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
 - Starts the HTTP MCP server on `0.0.0.0:7333`.
 
 ## Requirements
@@ -32,7 +35,7 @@ The entrypoint waits for `gbrain-postgres:5432`, so the Postgres service must be
 
 ## API Keys
 
-Pass these as environment variables at runtime (via `-e` or `--env-file`). The entrypoint automatically writes each key into gbrain's config and selects the correct embedding provider.
+Pass these as environment variables at runtime (via `-e` or `--env-file`). The entrypoint reports which keys are present, `gbrain` reads them directly from the environment, and the container selects the correct embedding provider automatically.
 
 | Variable | Purpose | Priority |
 |---|---|---|
@@ -40,6 +43,7 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 | `VOYAGE_API_KEY` | Alternative embedding provider (`voyage-3`). | 2nd |
 | `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 3rd |
 | `ANTHROPIC_API_KEY` | Optional. Enables query expansion via Claude Haiku to improve search quality. | — |
+| `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `60`. | — |
 
 **Embedding provider selection priority:** `ZEROENTROPY_API_KEY` → `VOYAGE_API_KEY` → `OPENAI_API_KEY`.  
 If none of these are set, the container starts with `--no-embedding` and vector search is unavailable until a key is configured.
@@ -60,8 +64,9 @@ docker run --rm \
   --network gbrain-network \
   -e DATABASE_URL="postgres://user:password@gbrain-postgres:5432/gbrain" \
   -e ZEROENTROPY_API_KEY="ze-..." \
-  -e OPENAI_API_KEY="sk-..." \
-  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  #-e OPENAI_API_KEY="sk-..." \
+  #-e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e SYNC_INTERVAL="300" \
   -p 7333:7333 \
   -v gbrain-data:/data/brain \
   docker-gbrain
@@ -84,8 +89,9 @@ Example `.env` file:
 ```env
 DATABASE_URL=postgres://user:password@gbrain-postgres:5432/gbrain
 ZEROENTROPY_API_KEY=ze-...
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
+SYNC_INTERVAL=300
 # VOYAGE_API_KEY=pa-...
 ```
 
@@ -111,9 +117,10 @@ services:
     environment:
       DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
       ZEROENTROPY_API_KEY: ${ZEROENTROPY_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
     ports:
       - "7333:7333"
     volumes:
@@ -134,7 +141,6 @@ Start with:
 ```sh
 # export keys first (or put them in a .env file in the same directory)
 export ZEROENTROPY_API_KEY=ze-...
-export OPENAI_API_KEY=sk-...
 docker compose up -d
 ```
 
@@ -167,13 +173,16 @@ http://localhost:7333
 The entrypoint performs these steps every time the container starts:
 
 1. Waits until `gbrain-postgres:5432` accepts connections.
-2. Writes any provided API keys to gbrain's config via `gbrain config set`.
+2. Reports which API keys are present in the environment.
 3. Detects the embedding provider from environment variables (ZeroEntropy → Voyage → OpenAI → `--no-embedding`).
-4. Runs `gbrain init --supabase --url "$DATABASE_URL" [--embedding-model <provider:model> | --no-embedding]`.
-5. Ensures `/data/brain` is a Git repository.
-6. Updates the default source in Postgres to use `/data/brain`.
-7. Starts `gbrain sync --watch --interval 60 --repo /data/brain`.
-8. Starts the HTTP MCP server.
+4. Checks whether the `pages` table already exists to distinguish first-time init from migration-only startup.
+5. Runs `gbrain init --supabase --url "$DATABASE_URL"` with either the selected embedding model or `--no-embedding`.
+6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider.
+7. Ensures `/data/brain` is a Git repository with local commit identity configured.
+8. Updates the default source in Postgres to use `/data/brain`.
+9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
+10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
+11. Starts the HTTP MCP server.
 
 Some initialization commands are allowed to fail without stopping the container, which makes repeated starts tolerant after the first successful setup.
 
