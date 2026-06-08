@@ -128,12 +128,11 @@ done) &
 
 # ---------------------------------------------------------------------------
 # 8. Sync + embed loop
-#    Runs gbrain sync then gbrain embed --stale (only if an embedding API key
-#    is present). Always chain both — sync alone leaves new chunks invisible
-#    to search. Restarts automatically after each cycle (including the 3600s
-#    watchdog kill).
+#    SYNC_INTERVAL: seconds between sync cycles (default: 60).
+#    Set via -e SYNC_INTERVAL=300 in docker run or compose environment.
 # ---------------------------------------------------------------------------
-echo "Starting sync+embed loop..."
+SYNC_INTERVAL="${SYNC_INTERVAL:-60}"
+echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 (while true; do
   if gbrain sync --repo /data/brain; then
     if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ]; then
@@ -142,10 +141,10 @@ echo "Starting sync+embed loop..."
       echo "[embed] skipped — no embedding API key set"
     fi
   else
-    echo "[sync] sync failed, will retry in 10s"
+    echo "[sync] sync failed, will retry in ${SYNC_INTERVAL}s"
   fi
-  echo "[sync] cycle ended, restarting in 10s..."
-  sleep 10
+  echo "[sync] cycle ended, next in ${SYNC_INTERVAL}s..."
+  sleep "$SYNC_INTERVAL"
 done) &
 
 # ---------------------------------------------------------------------------
