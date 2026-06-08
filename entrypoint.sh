@@ -36,28 +36,55 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Initialize brain
 # ---------------------------------------------------------------------------
+# Determine embedding flag from env vars (used for both first-run and re-init)
+if [ -n "$ZEROENTROPY_API_KEY" ]; then
+  EMBEDDING_FLAG="--embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280"
+  echo "Embedding provider: ZeroEntropy (zembed-1, 1280d)"
+elif [ -n "$VOYAGE_API_KEY" ]; then
+  EMBEDDING_FLAG="--embedding-model voyage:voyage-3"
+  echo "Embedding provider: Voyage (voyage-3)"
+elif [ -n "$OPENAI_API_KEY" ]; then
+  EMBEDDING_FLAG="--embedding-model openai:text-embedding-3-large"
+  echo "Embedding provider: OpenAI (text-embedding-3-large)"
+else
+  EMBEDDING_FLAG="--no-embedding"
+  echo "No embedding API key — deferring embedding setup."
+fi
+
+# Determine embed model/dims for patching later
+if [ -n "$ZEROENTROPY_API_KEY" ]; then
+  EMBED_MODEL="zeroentropyai:zembed-1"
+  EMBED_DIMS=1280
+elif [ -n "$VOYAGE_API_KEY" ]; then
+  EMBED_MODEL="voyage:voyage-3"
+  EMBED_DIMS=1024
+elif [ -n "$OPENAI_API_KEY" ]; then
+  EMBED_MODEL="openai:text-embedding-3-large"
+  EMBED_DIMS=3072
+fi
+
 if [ "$ALREADY_INITIALIZED" = "true" ]; then
-  echo "Brain already initialized — skipping embedding provider selection."
-  echo "Running init to apply any pending migrations only..."
+  echo "Brain already initialized — running migrations only..."
   printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" --no-embedding || true
 else
   echo "First-time initialization..."
-  if [ -n "$ZEROENTROPY_API_KEY" ]; then
-    EMBEDDING_FLAG="--embedding-model zeroentropyai:zembed-1"
-    echo "Embedding provider: ZeroEntropy (zembed-1)"
-  elif [ -n "$VOYAGE_API_KEY" ]; then
-    EMBEDDING_FLAG="--embedding-model voyage:voyage-3"
-    echo "Embedding provider: Voyage (voyage-3)"
-  elif [ -n "$OPENAI_API_KEY" ]; then
-    EMBEDDING_FLAG="--embedding-model openai:text-embedding-3-large"
-    echo "Embedding provider: OpenAI (text-embedding-3-large)"
-  else
-    EMBEDDING_FLAG="--no-embedding"
-    echo "No embedding API key found — deferring embedding setup (--no-embedding)."
-    echo "Set ZEROENTROPY_API_KEY, OPENAI_API_KEY, or VOYAGE_API_KEY to enable vector search."
-  fi
   # shellcheck disable=SC2086
   printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" $EMBEDDING_FLAG || true
+fi
+
+# Patch embedding config AFTER gbrain init — init always overwrites config.json,
+# so we must patch after it runs, not before.
+CONFIG_FILE="$HOME/.gbrain/config.json"
+mkdir -p "$(dirname "$CONFIG_FILE")"
+if [ "$EMBEDDING_FLAG" != "--no-embedding" ]; then
+  echo "Patching embedding config into $CONFIG_FILE (post-init)..."
+  EXISTING=$(cat "$CONFIG_FILE" 2>/dev/null || echo "{}")
+  printf '%s' "$EXISTING" | jq \
+    --arg model "$EMBED_MODEL" \
+    --argjson dims "$EMBED_DIMS" \
+    'del(.embedding_disabled) | .embedding_model = $model | .embedding_dimensions = $dims' \
+    > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+  echo "Embedding config patched: $EMBED_MODEL (${EMBED_DIMS}d)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -85,9 +112,8 @@ psql "$DATABASE_URL" -c \
   2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 7. Auto-commit watcher
-#    Watches /data/brain every 30s. If there are new or modified files,
-#    commits them so gbrain sync can pick them up automatically.
+# 7. Auto-commit watcher (every 30s)
+#    Commits any new/modified files so gbrain sync can pick them up.
 # ---------------------------------------------------------------------------
 echo "Starting auto-commit watcher..."
 (while true; do
@@ -101,13 +127,25 @@ echo "Starting auto-commit watcher..."
 done) &
 
 # ---------------------------------------------------------------------------
-# 8. Background sync (with auto-restart on crash)
+# 8. Sync + embed loop
+#    Runs gbrain sync then gbrain embed --stale (only if an embedding API key
+#    is present). Always chain both — sync alone leaves new chunks invisible
+#    to search. Restarts automatically after each cycle (including the 3600s
+#    watchdog kill).
 # ---------------------------------------------------------------------------
-echo "Starting background sync..."
+echo "Starting sync+embed loop..."
 (while true; do
-  gbrain sync --watch --interval 60 --repo /data/brain
-  echo "[sync] exited unexpectedly, restarting in 5s..."
-  sleep 5
+  if gbrain sync --repo /data/brain; then
+    if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ]; then
+      gbrain embed --stale || echo "[embed] embed failed, will retry next cycle"
+    else
+      echo "[embed] skipped — no embedding API key set"
+    fi
+  else
+    echo "[sync] sync failed, will retry in 10s"
+  fi
+  echo "[sync] cycle ended, restarting in 10s..."
+  sleep 10
 done) &
 
 # ---------------------------------------------------------------------------
