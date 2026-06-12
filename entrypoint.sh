@@ -105,6 +105,51 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. SSH auth for a PRIVATE brain repo
+#     The container can't share the host's ssh-agent, so we mount the host's
+#     SSH keys read-only at /root/.ssh and authenticate over SSH.
+#       - Seed a WRITABLE known_hosts (the mount is :ro, so we can't write
+#         into /root/.ssh) and pin github.com's host key.
+#       - BRAIN_REMOTE (optional): SSH remote URL, e.g.
+#         git@github.com:you/brain.git — set/updated so `gbrain sync` can
+#         pull & push. If the volume already has a remote, this is a no-op
+#         unless BRAIN_REMOTE differs.
+# ---------------------------------------------------------------------------
+if [ -d /root/.ssh ] && ls /root/.ssh/id_* >/dev/null 2>&1; then
+  echo "Host SSH keys detected — configuring SSH for git..."
+  KNOWN_HOSTS=/tmp/known_hosts
+  # Pin github.com (and ssh.github.com) so the first pull doesn't fail on
+  # host-key verification. accept-new in GIT_SSH_COMMAND covers other hosts.
+  ssh-keyscan -t rsa,ecdsa,ed25519 github.com ssh.github.com > "$KNOWN_HOSTS" 2>/dev/null \
+    && echo "  known_hosts seeded for github.com" \
+    || echo "  ssh-keyscan failed — relying on accept-new"
+
+  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS"
+
+  if [ -n "$BRAIN_REMOTE" ]; then
+    if git -C /data/brain remote get-url origin >/dev/null 2>&1; then
+      git -C /data/brain remote set-url origin "$BRAIN_REMOTE"
+    else
+      git -C /data/brain remote add origin "$BRAIN_REMOTE"
+    fi
+    echo "  origin set to $BRAIN_REMOTE"
+  fi
+
+  # If a remote exists, make the current branch track it so pull/push work.
+  if git -C /data/brain remote get-url origin >/dev/null 2>&1; then
+    BRANCH=$(git -C /data/brain symbolic-ref --short HEAD 2>/dev/null || echo main)
+    if git -C /data/brain fetch origin "$BRANCH" 2>/dev/null; then
+      git -C /data/brain branch --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
+      echo "  tracking origin/$BRANCH — SSH auth OK"
+    else
+      echo "  initial fetch failed (check key/permissions/URL) — sync will retry"
+    fi
+  fi
+else
+  echo "No SSH keys at /root/.ssh — brain repo treated as local-only."
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Point Postgres default source at the mounted brain volume
 # ---------------------------------------------------------------------------
 psql "$DATABASE_URL" -c \

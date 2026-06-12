@@ -1,7 +1,7 @@
 FROM oven/bun:latest
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y git netcat-openbsd postgresql-client jq && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git openssh-client netcat-openbsd postgresql-client jq && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/garrytan/gbrain .
 RUN bun install --registry https://registry.npmjs.org
 RUN bun link

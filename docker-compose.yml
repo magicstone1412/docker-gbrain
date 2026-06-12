@@ -1,0 +1,45 @@
+services:
+  gbrain-postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: gbrain
+      POSTGRES_PASSWORD: gbrain
+      POSTGRES_DB: gbrain
+    volumes:
+      - gbrain-postgres-data:/var/lib/postgresql/data
+    networks:
+      - gbrain-network
+
+  gbrain:
+    build: .
+    depends_on:
+      - gbrain-postgres
+    environment:
+      DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
+      ZEROENTROPY_API_KEY: ${ZEROENTROPY_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
+      # --- Private brain repo over SSH ---
+      # SSH remote URL for the brain repo. The entrypoint sets it as origin
+      # and makes the current branch track it so `gbrain sync` can pull & push.
+      BRAIN_REMOTE: ${BRAIN_REMOTE:-}
+      # Force git to use a writable known_hosts (the ~/.ssh mount below is :ro).
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
+    ports:
+      - "7333:7333"
+    volumes:
+      - gbrain-data:/data/brain
+      # Mount host SSH keys read-only so the container can auth to the private
+      # repo. Linux host: ${HOME} resolves to the user running compose.
+      - ${HOME}/.ssh:/root/.ssh:ro
+    networks:
+      - gbrain-network
+
+volumes:
+  gbrain-postgres-data:
+  gbrain-data:
+
+networks:
+  gbrain-network:

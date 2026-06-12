@@ -44,6 +44,7 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 | `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 3rd |
 | `ANTHROPIC_API_KEY` | Optional. Enables query expansion via Claude Haiku to improve search quality. | — |
 | `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `60`. | — |
+| `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
 
 **Embedding provider selection priority:** `ZEROENTROPY_API_KEY` → `VOYAGE_API_KEY` → `OPENAI_API_KEY`.  
 If none of these are set, the container starts with `--no-embedding` and vector search is unavailable until a key is configured.
@@ -153,6 +154,50 @@ The container declares `/data/brain` as a volume. Mount this path to keep the lo
 ```
 
 On first startup, the entrypoint initializes this directory as a Git repository and creates an empty initial commit.
+
+## Private Brain Repo (SSH)
+
+If your brain repo lives on a **private** Git remote, the container needs SSH
+credentials to pull and push. Containers can't share the host's `ssh-agent`, so
+the host's SSH keys are mounted read-only and used directly.
+
+The provided `docker-compose.yml` already wires this up:
+
+```yaml
+    environment:
+      # SSH remote URL — set as origin and tracked by the current branch.
+      BRAIN_REMOTE: ${BRAIN_REMOTE:-}
+      # Use a writable known_hosts because the ~/.ssh mount below is read-only.
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
+    volumes:
+      - ${HOME}/.ssh:/root/.ssh:ro
+```
+
+Run with the remote set (Linux host):
+
+```sh
+export BRAIN_REMOTE=git@github.com:you/brain.git
+docker compose up -d --build
+```
+
+On startup the entrypoint:
+
+1. Detects keys at `/root/.ssh` (the mounted host keys).
+2. Seeds `/tmp/known_hosts` for `github.com` via `ssh-keyscan` so the first
+   pull doesn't fail host-key verification (`accept-new` covers other hosts).
+3. Sets `origin` to `BRAIN_REMOTE` (if provided) and makes the current branch
+   track it, so the background sync loop can pull & push.
+
+Notes:
+
+- **Linux host only.** Bind-mounted key permissions are preserved on Linux, and
+  the container runs as `root` so it can read the user's keys. On Windows/macOS
+  Docker Desktop, the `:ro` mount may expose keys with permissions SSH rejects.
+- The mount is **read-only** — the host keys are never modified.
+- If `BRAIN_REMOTE` is omitted but the volume already has an `origin`, the
+  existing remote is used as-is.
+- Without any SSH keys, the brain repo is treated as **local-only** and the
+  sync loop's `git pull` warning (`Already up to date.`) is harmless.
 
 ## MCP Server
 
