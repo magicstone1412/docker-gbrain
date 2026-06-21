@@ -1,0 +1,48 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+known_hosts
+
+# Docker and local runtime data
+.docker/
+docker-data/
+data/
+brain/
+postgres-data/
+*.log
+*.pid
+
+# Node/Bun dependencies and build outputs
+node_modules/
+bun.lockb.tmp
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Python caches, if helper scripts are added later
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local assistant/tooling state
+.claude/
+.codex/
+.agents/
