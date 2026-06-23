@@ -4,25 +4,6 @@ Docker image wrapper for [gbrain](https://github.com/garrytan/gbrain), packaged 
 
 The image builds `gbrain` from source, initializes it against a Postgres database, starts background sync for the local brain repo, and serves the MCP endpoint on port `7333`.
 
-## What This Image Does
-
-- Uses `oven/bun:latest` as the base image.
-- Installs `git`, `netcat-openbsd`, `postgresql-client`, and `jq`.
-- Clones `https://github.com/garrytan/gbrain` into `/app`.
-- Runs `bun install` and `bun link`.
-- Creates `/data/brain` as the persistent brain repository.
-- Waits for a Postgres host named `gbrain-postgres` on port `5432`.
-- Detects which embedding provider to use from environment variables.
-- Runs `gbrain init --supabase` with the appropriate embedding flag.
-- Lets `gbrain` read API keys directly from environment variables.
-- Patches `~/.gbrain/config.json` after init so the selected embedding model/dimensions persist.
-- Initializes `/data/brain` as a Git repository if needed.
-- Updates the default source path in Postgres to `/data/brain`.
-- Starts an auto-commit watcher for `/data/brain`.
-- Runs a background sync/embed loop on a configurable interval.
-- Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
-- Starts the HTTP MCP server on `0.0.0.0:7333`.
-
 ## Requirements
 
 - Docker
@@ -253,3 +234,22 @@ Some initialization commands are allowed to fail without stopping the container,
 
 - `Dockerfile` — builds the gbrain runtime image.
 - `entrypoint.sh` — handles database readiness, API key wiring, initialization, background sync, and server startup.
+
+## What This Image Does
+
+- Uses `oven/bun:latest` as the base image.
+- Installs `git`, `netcat-openbsd`, `postgresql-client`, and `jq`.
+- Clones `https://github.com/garrytan/gbrain` into `/app`.
+- Runs `bun install` and `bun link`.
+- Creates `/data/brain` as the persistent brain repository.
+- Waits for a Postgres host named `gbrain-postgres` on port `5432`.
+- Detects which embedding provider to use from environment variables.
+- Runs `gbrain init --supabase` with the appropriate embedding flag.
+- Lets `gbrain` read API keys directly from environment variables.
+- Patches `~/.gbrain/config.json` after init so the selected embedding model/dimensions persist.
+- Initializes `/data/brain` as a Git repository if needed.
+- Updates the default source path in Postgres to `/data/brain`.
+- Starts an auto-commit watcher for `/data/brain`.
+- Runs a background sync/embed loop on a configurable interval.
+- Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
+- Starts the HTTP MCP server on `0.0.0.0:7333`.
