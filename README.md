@@ -73,6 +73,12 @@ docker run --rm \
   docker-gbrain
 ```
 
+If `gbrain` is already running in Docker and you want to execute commands inside the container, use:
+
+```sh
+docker exec -ti gbrain /bin/bash
+```
+
 You can also pass keys from a file:
 
 ```sh
