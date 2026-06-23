@@ -219,6 +219,18 @@ After the container is running, the HTTP MCP server is available on:
 http://localhost:7333
 ```
 
+## Tích hợp vào Hermes Agent
+
+Thêm cấu hình sau vào Hermes để kết nối tới MCP server của `gbrain`:
+
+```yaml
+mcp_servers:
+  gbrain:
+    headers:
+      Authorization: Bearer ${GBRAIN_TOKEN}
+    url: http://gbrain:7333/mcp
+```
+
 ## Startup Flow
 
 The entrypoint performs these steps every time the container starts:
