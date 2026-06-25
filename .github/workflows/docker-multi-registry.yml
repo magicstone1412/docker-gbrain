@@ -39,13 +39,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize image name
+        id: image_name
+        run: echo "value=${GITHUB_REPOSITORY#*/}" | sed 's/^value=docker-/value=/' >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: |
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
-            skywirex/${{ github.event.repository.name }}
+            ghcr.io/${{ github.repository_owner }}/${{ steps.image_name.outputs.value }}
+            skywirex/${{ steps.image_name.outputs.value }}
           tags: |
             type=semver,pattern={{raw}}
             type=ref,event=branch
