@@ -196,7 +196,34 @@ echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 done) &
 
 # ---------------------------------------------------------------------------
-# 9. Start job worker (background)
+# 9. Start autopilot daemon (optional, controlled by AUTOPILOT_ENABLED)
+#    Monitors brain health and runs overnight enrichment cycle automatically.
+#    - Healthy brain (score 95+): sleeps 60min between ticks
+#    - Unhealthy brain: runs full cycle (sync, extract, embed, consolidate, synthesize)
+#    Enable via: AUTOPILOT_ENABLED=true in docker-compose environment.
+#    Requires at least one embedding API key — autopilot runs embed phases
+#    that are no-ops (or harmful) without a configured embedding provider.
+# ---------------------------------------------------------------------------
+HAS_EMBEDDING_KEY=false
+if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
+  HAS_EMBEDDING_KEY=true
+fi
+
+if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
+  if [ "$HAS_EMBEDDING_KEY" = "true" ]; then
+    echo "Starting autopilot daemon (max-usd: ${AUTOPILOT_MAX_USD:-5})..."
+    gbrain autopilot --max-usd "${AUTOPILOT_MAX_USD:-5}" &
+    echo "Autopilot started."
+  else
+    echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
+    echo "Set ZEROENTROPY_API_KEY, VOYAGE_API_KEY, or OPENAI_API_KEY to enable autopilot."
+  fi
+else
+  echo "Autopilot disabled (set AUTOPILOT_ENABLED=true to enable)."
+fi
+
+# ---------------------------------------------------------------------------
+# 10. Start job worker (background)
 #    Required for Postgres engine — processes queued minion/subagent jobs.
 #    Without this, wedged_queue FAIL appears in gbrain doctor.
 # ---------------------------------------------------------------------------
@@ -206,7 +233,7 @@ JOB_WORKER_PID=$!
 echo "Job worker started (PID $JOB_WORKER_PID)"
 
 # ---------------------------------------------------------------------------
-# 10. Start MCP server (foreground / PID 1)
+# 11. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
 echo "Starting MCP server..."
 exec gbrain serve --http --port 7333 --bind 0.0.0.0

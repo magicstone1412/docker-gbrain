@@ -21,6 +21,11 @@ services:
       # VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
+      # --- Autopilot daemon ---
+      # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
+      # AUTOPILOT_MAX_USD caps LLM spend per autopilot tick (default: 5).
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-false}
+      AUTOPILOT_MAX_USD: ${AUTOPILOT_MAX_USD:-5}
       # --- Private brain repo over SSH ---
       # SSH remote URL for the brain repo. The entrypoint sets it as origin
       # and makes the current branch track it so `gbrain sync` can pull & push.
