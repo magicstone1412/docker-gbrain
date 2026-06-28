@@ -193,8 +193,6 @@ echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
     else
       echo "[embed] skipped — no embedding API key set"
     fi
-    gbrain extract links --source db 2>/dev/null || true
-    gbrain extract timeline --source db 2>/dev/null || true
   else
     echo "[sync] sync failed, will retry in ${SYNC_INTERVAL}s"
   fi
