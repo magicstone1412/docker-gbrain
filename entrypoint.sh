@@ -196,7 +196,17 @@ echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 done) &
 
 # ---------------------------------------------------------------------------
-# 9. Start MCP server (foreground / PID 1)
+# 9. Start job worker (background)
+#    Required for Postgres engine — processes queued minion/subagent jobs.
+#    Without this, wedged_queue FAIL appears in gbrain doctor.
+# ---------------------------------------------------------------------------
+echo "Starting job worker..."
+gbrain jobs work &
+JOB_WORKER_PID=$!
+echo "Job worker started (PID $JOB_WORKER_PID)"
+
+# ---------------------------------------------------------------------------
+# 10. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
 echo "Starting MCP server..."
 exec gbrain serve --http --port 7333 --bind 0.0.0.0
