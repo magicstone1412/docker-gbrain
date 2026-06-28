@@ -91,12 +91,19 @@ fi
 # 5. Ensure /data/brain is a Git repo with git config
 # ---------------------------------------------------------------------------
 echo "Configuring brain repo..."
+
+# Global git config — must run unconditionally on every container start,
+# not just on first init. Without this, git pull inside gbrain sync will
+# hang waiting for an editor that doesn't exist in the container.
+git config --global core.editor "true"
+git config --global pull.rebase false
+git config --global merge.conflictstyle diff3
+
 if [ ! -d /data/brain/.git ]; then
   cd /data/brain
   git init
   git config user.email "gbrain@local"
   git config user.name "GBrain"
-  git config --global core.editor "true"
   git commit --allow-empty -m "init brain repo"
   cd /app
 else
