@@ -96,6 +96,7 @@ if [ ! -d /data/brain/.git ]; then
   git init
   git config user.email "gbrain@local"
   git config user.name "GBrain"
+  git config --global core.editor "true"
   git commit --allow-empty -m "init brain repo"
   cd /app
 else
