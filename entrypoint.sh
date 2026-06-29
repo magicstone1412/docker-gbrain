@@ -181,10 +181,10 @@ done) &
 
 # ---------------------------------------------------------------------------
 # 8. Sync + embed loop
-#    SYNC_INTERVAL: seconds between sync cycles (default: 60).
+#    SYNC_INTERVAL: seconds between sync cycles (default: 900).
 #    Set via -e SYNC_INTERVAL=300 in docker run or compose environment.
 # ---------------------------------------------------------------------------
-SYNC_INTERVAL="${SYNC_INTERVAL:-60}"
+SYNC_INTERVAL="${SYNC_INTERVAL:-900}"
 echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 (while true; do
   if gbrain sync --repo /data/brain; then
@@ -216,8 +216,8 @@ fi
 
 if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
   if [ "$HAS_EMBEDDING_KEY" = "true" ]; then
-    echo "Starting autopilot daemon (max-usd: ${AUTOPILOT_MAX_USD:-5})..."
-    gbrain autopilot --max-usd "${AUTOPILOT_MAX_USD:-5}" &
+    echo "Starting autopilot daemon (max-usd: ${AUTOPILOT_MAX_USD:-1})..."
+    gbrain autopilot --max-usd "${AUTOPILOT_MAX_USD:-1}" &
     echo "Autopilot started."
   else
     echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
