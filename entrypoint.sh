@@ -201,30 +201,52 @@ echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 done) &
 
 # ---------------------------------------------------------------------------
-# 9. Start autopilot daemon (optional, controlled by AUTOPILOT_ENABLED)
-#    Monitors brain health and runs overnight enrichment cycle automatically.
-#    - Healthy brain (score 95+): sleeps 60min between ticks
-#    - Unhealthy brain: runs full cycle (sync, extract, embed, consolidate, synthesize)
-#    Enable via: AUTOPILOT_ENABLED=true in docker-compose environment.
-#    Requires at least one embedding API key — autopilot runs embed phases
-#    that are no-ops (or harmful) without a configured embedding provider.
+# 9. Dream cycle cron (optional, controlled by DREAM_ENABLED)
+#    Runs `gbrain dream` once per day at DREAM_HOUR:00 local container time
+#    (default 02:00). The 8-phase overnight maintenance cycle: entity sweep,
+#    citation fixes, memory consolidation, conversation synthesis, and
+#    cross-session pattern detection. This is what makes the brain compound
+#    — see docs/guides/cron-schedule.md upstream.
+#
+#    Enable via: DREAM_ENABLED=true in docker-compose environment.
+#    Time via:   DREAM_HOUR=2   (24h, container-local; default 2 = 2AM)
+#    Requires at least one embedding API key — dream's enrichment phases are
+#    no-ops (or harmful) without a configured embedding provider.
 # ---------------------------------------------------------------------------
 HAS_EMBEDDING_KEY=false
 if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
   HAS_EMBEDDING_KEY=true
 fi
 
-if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
+DREAM_HOUR="${DREAM_HOUR:-2}"
+
+if [ "${DREAM_ENABLED:-false}" = "true" ]; then
   if [ "$HAS_EMBEDDING_KEY" = "true" ]; then
-    echo "Starting autopilot daemon (max-usd: ${AUTOPILOT_MAX_USD:-1})..."
-    gbrain autopilot --max-usd "${AUTOPILOT_MAX_USD:-1}" &
-    echo "Autopilot started."
+    echo "Starting dream cycle cron (daily at ${DREAM_HOUR}:00)..."
+    (
+      LAST_RUN_DATE=""
+      while true; do
+        CURRENT_HOUR=$(date '+%H' | sed 's/^0//')
+        CURRENT_DATE=$(date '+%Y-%m-%d')
+        if [ "$CURRENT_HOUR" = "$DREAM_HOUR" ] && [ "$CURRENT_DATE" != "$LAST_RUN_DATE" ]; then
+          echo "[dream] starting cycle for ${CURRENT_DATE}..."
+          if gbrain dream; then
+            echo "[dream] cycle completed successfully"
+          else
+            echo "[dream] cycle failed — will retry same time tomorrow"
+          fi
+          LAST_RUN_DATE="$CURRENT_DATE"
+        fi
+        sleep 60
+      done
+    ) &
+    echo "Dream cron started."
   else
-    echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
-    echo "Set ZEROENTROPY_API_KEY, VOYAGE_API_KEY, or OPENAI_API_KEY to enable autopilot."
+    echo "Dream cycle skipped — DREAM_ENABLED=true but no embedding API key is set."
+    echo "Set ZEROENTROPY_API_KEY, VOYAGE_API_KEY, or OPENAI_API_KEY to enable dream."
   fi
 else
-  echo "Autopilot disabled (set AUTOPILOT_ENABLED=true to enable)."
+  echo "Dream cycle disabled (set DREAM_ENABLED=true to enable, DREAM_HOUR to set time)."
 fi
 
 # ---------------------------------------------------------------------------
