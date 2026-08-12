@@ -9,6 +9,11 @@ on:
       - "v*.*.*"
   workflow_dispatch:
 
+# Serialize publishing to avoid overlapping GHCR manifest writes and secondary-rate-limit responses.
+concurrency:
+  group: ghcr-gbrain-publish
+  cancel-in-progress: false
+
 jobs:
   docker:
     runs-on: ubuntu-latest
