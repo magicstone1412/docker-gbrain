@@ -36,7 +36,7 @@ If none of these are set, the container starts with `--no-embedding` and vector 
 
 ## Build
 
-By default, the image checks out the upstream `latest` tag from `garrytan/gbrain` and builds `gbrain` from that tagged source.
+By default, the image resolves the newest upstream version tag from `garrytan/gbrain` and builds `gbrain` from that tagged source.
 
 ```sh
 docker build -t docker-gbrain .
@@ -258,7 +258,7 @@ Some initialization commands are allowed to fail without stopping the container,
 
 - Uses `oven/bun:latest` as the base image.
 - Installs `git`, `netcat-openbsd`, `postgresql-client`, and `jq`.
-- Checks out the upstream `latest` tag from `garrytan/gbrain` and builds the `gbrain` binary from that tagged source.
+- Resolves the newest upstream version tag from `garrytan/gbrain` and builds the `gbrain` binary from that tagged source.
 - Creates `/data/brain` as the persistent brain repository.
 - Waits for a Postgres host named `gbrain-postgres` on port `5432`.
 - Detects which embedding provider to use from environment variables.
