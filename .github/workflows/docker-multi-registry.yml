@@ -56,7 +56,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ steps.image_name.outputs.value }}
             skywirex/${{ steps.image_name.outputs.value }}
           tags: |
-            type=semver,pattern={{raw}}
+            type=ref,event=tag
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
