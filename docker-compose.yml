@@ -16,9 +16,8 @@ services:
       - gbrain-postgres
     environment:
       DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
-      ZEROENTROPY_API_KEY: ${ZEROENTROPY_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
       # --- Autopilot daemon ---

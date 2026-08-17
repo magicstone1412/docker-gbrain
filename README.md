@@ -20,16 +20,15 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 
 | Variable | Purpose | Priority |
 |---|---|---|
-| `ZEROENTROPY_API_KEY` | Default embedding (`zembed-1`) + reranker (`zerank-2`). Recommended — ~2× faster and ~2.6× cheaper than OpenAI. | 1st |
-| `VOYAGE_API_KEY` | Alternative embedding provider (`voyage-3`). | 2nd |
-| `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 3rd |
+| `VOYAGE_API_KEY` | Default embedding provider (`voyage-4`, 1024 dimensions). | 1st |
+| `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 2nd |
 | `ANTHROPIC_API_KEY` | Optional. Enables query expansion via Claude Haiku to improve search quality. | — |
 | `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `60`. | — |
 | `AUTOPILOT_ENABLED` | Optional. Set to `true` to run `gbrain autopilot` as a background daemon. Monitors brain health and runs overnight enrichment automatically. Default: `false`. | — |
 | `AUTOPILOT_MAX_USD` | Optional. Maximum LLM spend per autopilot tick (USD). Default: `5`. Only used when `AUTOPILOT_ENABLED=true`. | — |
 | `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
 
-**Embedding provider selection priority:** `ZEROENTROPY_API_KEY` → `VOYAGE_API_KEY` → `OPENAI_API_KEY`.  
+**Embedding provider selection priority:** `VOYAGE_API_KEY` → `OPENAI_API_KEY`.
 If none of these are set, the container starts with `--no-embedding` and vector search is unavailable until a key is configured.
 
 > **Note:** `embedding_model` and `embedding_dimensions` are schema-level settings. If you change the provider after the first run, you must re-embed all content with `gbrain embed --stale`.
@@ -55,7 +54,7 @@ docker run --rm \
   --name gbrain \
   --network gbrain-network \
   -e DATABASE_URL="postgres://user:password@gbrain-postgres:5432/gbrain" \
-  -e ZEROENTROPY_API_KEY="ze-..." \
+  -e VOYAGE_API_KEY="pa-..." \
   #-e OPENAI_API_KEY="sk-..." \
   #-e ANTHROPIC_API_KEY="sk-ant-..." \
   -e SYNC_INTERVAL="300" \
@@ -88,13 +87,12 @@ Example `.env` file:
 
 ```env
 DATABASE_URL=postgres://user:password@gbrain-postgres:5432/gbrain
-ZEROENTROPY_API_KEY=ze-...
+VOYAGE_API_KEY=pa-...
 # OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
 SYNC_INTERVAL=300
 # AUTOPILOT_ENABLED=true
 # AUTOPILOT_MAX_USD=5
-# VOYAGE_API_KEY=pa-...
 ```
 
 ## Docker Compose Example
@@ -118,9 +116,8 @@ services:
       - gbrain-postgres
     environment:
       DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
-      ZEROENTROPY_API_KEY: ${ZEROENTROPY_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
       # --- Autopilot daemon ---
@@ -145,7 +142,7 @@ Start with:
 
 ```sh
 # export keys first (or put them in a .env file in the same directory)
-export ZEROENTROPY_API_KEY=ze-...
+export VOYAGE_API_KEY=pa-...
 docker compose up -d
 ```
 
@@ -235,10 +232,10 @@ The entrypoint performs these steps every time the container starts:
 
 1. Waits until `gbrain-postgres:5432` accepts connections.
 2. Reports which API keys are present in the environment.
-3. Detects the embedding provider from environment variables (ZeroEntropy → Voyage → OpenAI → `--no-embedding`).
+3. Detects the embedding provider from environment variables (Voyage → OpenAI → `--no-embedding`).
 4. Checks whether the `pages` table already exists to distinguish first-time init from migration-only startup.
 5. Runs `gbrain init --supabase --url "$DATABASE_URL"` with either the selected embedding model or `--no-embedding`.
-6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider.
+6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider (`voyage:voyage-4`, `1024d` by default).
 7. Ensures `/data/brain` is a Git repository with local commit identity configured.
 8. Updates the default source in Postgres to use `/data/brain`.
 9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
@@ -261,7 +258,7 @@ Some initialization commands are allowed to fail without stopping the container,
 - Resolves the newest upstream version tag from `garrytan/gbrain` and builds the `gbrain` binary from that tagged source.
 - Creates `/data/brain` as the persistent brain repository.
 - Waits for a Postgres host named `gbrain-postgres` on port `5432`.
-- Detects which embedding provider to use from environment variables.
+- Detects which embedding provider to use from environment variables (`voyage-4` → OpenAI).
 - Runs `gbrain init --supabase` with the appropriate embedding flag.
 - Lets `gbrain` read API keys directly from environment variables.
 - Patches `~/.gbrain/config.json` after init so the selected embedding model/dimensions persist.

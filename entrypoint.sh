@@ -12,11 +12,11 @@ echo "Postgres ready!"
 
 # ---------------------------------------------------------------------------
 # 2. Report which API keys are present in the environment.
-#    gbrain reads ZEROENTROPY_API_KEY, OPENAI_API_KEY, VOYAGE_API_KEY, and
-#    ANTHROPIC_API_KEY directly from env — no `gbrain config set` needed.
+#    gbrain reads VOYAGE_API_KEY, OPENAI_API_KEY, and ANTHROPIC_API_KEY
+#    directly from env — no `gbrain config set` needed.
 # ---------------------------------------------------------------------------
 echo "API key status:"
-for var in ZEROENTROPY_API_KEY OPENAI_API_KEY VOYAGE_API_KEY ANTHROPIC_API_KEY; do
+for var in VOYAGE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY; do
   eval val=\$$var
   if [ -n "$val" ]; then
     echo "  ✓ $var is set"
@@ -37,12 +37,9 @@ fi
 # 4. Initialize brain
 # ---------------------------------------------------------------------------
 # Determine embedding flag from env vars (used for both first-run and re-init)
-if [ -n "$ZEROENTROPY_API_KEY" ]; then
-  EMBEDDING_FLAG="--embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280"
-  echo "Embedding provider: ZeroEntropy (zembed-1, 1280d)"
-elif [ -n "$VOYAGE_API_KEY" ]; then
-  EMBEDDING_FLAG="--embedding-model voyage:voyage-3"
-  echo "Embedding provider: Voyage (voyage-3)"
+if [ -n "$VOYAGE_API_KEY" ]; then
+  EMBEDDING_FLAG="--embedding-model voyage:voyage-4 --embedding-dimensions 1024"
+  echo "Embedding provider: Voyage (voyage-4, 1024d)"
 elif [ -n "$OPENAI_API_KEY" ]; then
   EMBEDDING_FLAG="--embedding-model openai:text-embedding-3-large"
   echo "Embedding provider: OpenAI (text-embedding-3-large)"
@@ -52,11 +49,8 @@ else
 fi
 
 # Determine embed model/dims for patching later
-if [ -n "$ZEROENTROPY_API_KEY" ]; then
-  EMBED_MODEL="zeroentropyai:zembed-1"
-  EMBED_DIMS=1280
-elif [ -n "$VOYAGE_API_KEY" ]; then
-  EMBED_MODEL="voyage:voyage-3"
+if [ -n "$VOYAGE_API_KEY" ]; then
+  EMBED_MODEL="voyage:voyage-4"
   EMBED_DIMS=1024
 elif [ -n "$OPENAI_API_KEY" ]; then
   EMBED_MODEL="openai:text-embedding-3-large"
@@ -188,7 +182,7 @@ SYNC_INTERVAL="${SYNC_INTERVAL:-900}"
 echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
 (while true; do
   if gbrain sync --repo /data/brain; then
-    if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ]; then
+    if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
       gbrain embed --stale || echo "[embed] embed failed, will retry next cycle"
     else
       echo "[embed] skipped — no embedding API key set"
@@ -210,7 +204,7 @@ done) &
 #    that are no-ops (or harmful) without a configured embedding provider.
 # ---------------------------------------------------------------------------
 HAS_EMBEDDING_KEY=false
-if [ -n "$ZEROENTROPY_API_KEY" ] || [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
+if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
   HAS_EMBEDDING_KEY=true
 fi
 
@@ -221,7 +215,7 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     echo "Autopilot started."
   else
     echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
-    echo "Set ZEROENTROPY_API_KEY, VOYAGE_API_KEY, or OPENAI_API_KEY to enable autopilot."
+    echo "Set VOYAGE_API_KEY or OPENAI_API_KEY to enable autopilot."
   fi
 else
   echo "Autopilot disabled (set AUTOPILOT_ENABLED=true to enable)."
