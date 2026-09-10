@@ -26,6 +26,42 @@ for var in VOYAGE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY; do
 done
 
 # ---------------------------------------------------------------------------
+# 2b. Custom endpoint normalization (ANTHROPIC_BASE_URL / OPENAI_BASE_URL)
+#     Works around gbrain issue #1250: the Vercel AI SDK POSTs to
+#     "${ANTHROPIC_BASE_URL}/messages" verbatim, so a bare host
+#     (https://api.example.com, no /v1) returns HTTP 404. gbrain reads these
+#     vars straight from process.env, so exporting the corrected value here
+#     is enough — no gbrain-side patch needed. Still open upstream as of
+#     gbrain 0.37.3.0+; safe to keep even after it's fixed (idempotent).
+# ---------------------------------------------------------------------------
+normalize_base_url() {
+  # $1 = raw URL, prints URL guaranteed to end in /v<N>
+  case "$1" in
+    */v[0-9]|*/v[0-9]/) printf '%s' "$1" ;;
+    */) printf '%sv1' "$1" ;;
+    *)  printf '%s/v1' "$1" ;;
+  esac
+}
+
+if [ -n "$ANTHROPIC_BASE_URL" ]; then
+  NORMALIZED=$(normalize_base_url "$ANTHROPIC_BASE_URL")
+  if [ "$NORMALIZED" != "$ANTHROPIC_BASE_URL" ]; then
+    echo "  ⚠ ANTHROPIC_BASE_URL missing /v1 — normalizing: $ANTHROPIC_BASE_URL -> $NORMALIZED"
+    export ANTHROPIC_BASE_URL="$NORMALIZED"
+  fi
+  echo "  ✓ ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL (custom endpoint)"
+fi
+
+if [ -n "$OPENAI_BASE_URL" ]; then
+  NORMALIZED=$(normalize_base_url "$OPENAI_BASE_URL")
+  if [ "$NORMALIZED" != "$OPENAI_BASE_URL" ]; then
+    echo "  ⚠ OPENAI_BASE_URL missing /v1 — normalizing: $OPENAI_BASE_URL -> $NORMALIZED"
+    export OPENAI_BASE_URL="$NORMALIZED"
+  fi
+  echo "  ✓ OPENAI_BASE_URL=$OPENAI_BASE_URL (custom endpoint)"
+fi
+
+# ---------------------------------------------------------------------------
 # 3. Detect whether gbrain has already been initialized
 # ---------------------------------------------------------------------------
 ALREADY_INITIALIZED=false
