@@ -238,6 +238,18 @@ done) &
 #    Enable via: AUTOPILOT_ENABLED=true in docker-compose environment.
 #    Requires at least one embedding API key — autopilot runs embed phases
 #    that are no-ops (or harmful) without a configured embedding provider.
+#
+#    IMPORTANT (per gbrain skills/setup/SKILL.md): there is no "run autopilot
+#    in the foreground with a flag" mode. `gbrain autopilot --install` is the
+#    only entry point, and on ephemeral containers (Docker/Render/Railway/Fly)
+#    it does NOT start a background process itself — it writes
+#    ~/.gbrain/start-autopilot.sh and expects the container's own bootstrap
+#    (this entrypoint) to source it on every start. We do that below.
+#
+#    ALSO IMPORTANT (per v0.46.27.0 release notes): the daemon wrapper reads
+#    keys from ~/.gbrain/env, not from the process environment — daemon
+#    supervisors never source shell rc/compose env. So we mirror the relevant
+#    *_API_KEY / *_BASE_URL vars into that file before installing.
 # ---------------------------------------------------------------------------
 HAS_EMBEDDING_KEY=false
 if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
@@ -246,9 +258,55 @@ fi
 
 if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
   if [ "$HAS_EMBEDDING_KEY" = "true" ]; then
-    echo "Starting autopilot daemon (max-usd: ${AUTOPILOT_MAX_USD:-1})..."
-    gbrain autopilot --max-usd "${AUTOPILOT_MAX_USD:-1}" &
-    echo "Autopilot started."
+    GBRAIN_ENV_FILE="$HOME/.gbrain/env"
+    mkdir -p "$(dirname "$GBRAIN_ENV_FILE")"
+
+    # First install (or re-install/reload) so the template + start script
+    # exist. Safe to re-run every container start — v0.46.27.0+ makes
+    # --install idempotent and reload-safe.
+    echo "Installing/reloading autopilot..."
+    gbrain autopilot --install || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
+
+    # Mirror live container env into the daemon-owned env file (0600),
+    # preserving any lines --install already wrote that we don't manage.
+    touch "$GBRAIN_ENV_FILE"
+    chmod 600 "$GBRAIN_ENV_FILE"
+    for var in VOYAGE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_BASE_URL OPENAI_BASE_URL; do
+      eval val=\$$var
+      [ -z "$val" ] && continue
+      if grep -q "^${var}=" "$GBRAIN_ENV_FILE" 2>/dev/null; then
+        sed -i "s|^${var}=.*|${var}=${val}|" "$GBRAIN_ENV_FILE"
+      else
+        printf '%s=%s\n' "$var" "$val" >> "$GBRAIN_ENV_FILE"
+      fi
+    done
+    echo "  synced $(grep -c '=' "$GBRAIN_ENV_FILE" 2>/dev/null || echo 0) key(s) into $GBRAIN_ENV_FILE"
+
+    # NOTE: `gbrain autopilot` has no --max-usd / spend-cap flag or config key
+    # as of 0.48.5.0 (confirmed via `gbrain --help` and `config get autopilot`
+    # returning "not found"). AUTOPILOT_MAX_USD is exported for forward
+    # compatibility only — it currently has no effect. Track real spend via
+    # /root/.gbrain/audit/ once autopilot has ticked.
+    export AUTOPILOT_MAX_USD="${AUTOPILOT_MAX_USD:-1}"
+
+    # The container-mode artifact --install produces is itself executable
+    # with a #!/bin/bash shebang and self-backgrounds via its own
+    # `nohup ... &`. Execute it directly (not `. sourced`) so bash — not
+    # this sh/dash entrypoint — runs it, and don't double-background: the
+    # script returns almost immediately after its internal nohup call.
+    START_SCRIPT="$HOME/.gbrain/start-autopilot.sh"
+    if [ -x "$START_SCRIPT" ]; then
+      echo "Starting autopilot via $START_SCRIPT ..."
+      "$START_SCRIPT"
+      echo "Autopilot started (pid $(cat "$HOME/.gbrain/autopilot.pid" 2>/dev/null || echo '?'))."
+    elif [ -f "$START_SCRIPT" ]; then
+      echo "Starting autopilot via $START_SCRIPT (via sh, not marked executable) ..."
+      sh "$START_SCRIPT"
+      echo "Autopilot started."
+    else
+      echo "  [warn] $START_SCRIPT not found after --install — autopilot NOT running."
+      echo "  Check 'gbrain autopilot --status' and container logs for the real cause."
+    fi
   else
     echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
     echo "Set VOYAGE_API_KEY or OPENAI_API_KEY to enable autopilot."
