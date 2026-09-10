@@ -18,14 +18,13 @@ services:
       DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      # ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # --- Custom / self-hosted endpoint (optional) ---
       # Point at an OpenAI- or Anthropic-compatible gateway instead of the
       # public API. entrypoint.sh auto-appends /v1 if you forget it
-      # (works around gbrain issue #1250 — bare host causes a 404).     
-      
+      # (works around gbrain issue #1250 — bare host causes a 404).
+      # ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
       # --- Autopilot daemon ---
       # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
@@ -40,6 +39,8 @@ services:
       GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
     ports:
       - "7333:7333"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - gbrain-data:/data/brain
       # Mount host SSH keys read-only so the container can auth to the private
