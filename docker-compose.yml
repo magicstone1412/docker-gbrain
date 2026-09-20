@@ -18,7 +18,8 @@ services:
       DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Needed for full autopilot LLM phases when using Voyage-only embeddings.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # --- Custom / self-hosted endpoint (optional) ---
       # Point at an OpenAI- or Anthropic-compatible gateway instead of the
       # public API. entrypoint.sh auto-appends /v1 if you forget it

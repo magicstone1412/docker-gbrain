@@ -258,6 +258,9 @@ fi
 
 if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
   if [ "$HAS_EMBEDDING_KEY" = "true" ]; then
+    echo "Autopilot daemon starting. NOTE: an embedding key alone does not guarantee a usable LLM chat provider."
+    echo "chronicle/dream/enrich require Anthropic or OpenAI chat and no-op if none is available."
+    echo "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or check 'gbrain autopilot --status' / autopilot.log after boot."
     GBRAIN_ENV_FILE="$HOME/.gbrain/env"
     mkdir -p "$(dirname "$GBRAIN_ENV_FILE")"
 
@@ -303,7 +306,7 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     fi
   else
     echo "Autopilot skipped — AUTOPILOT_ENABLED=true but no embedding API key is set."
-    echo "Set VOYAGE_API_KEY or OPENAI_API_KEY to enable autopilot."
+    echo "Set VOYAGE_API_KEY or OPENAI_API_KEY to enable the daemon; chat phases also need Anthropic or OpenAI."
   fi
 else
   echo "Autopilot disabled (set AUTOPILOT_ENABLED=true to enable)."
