@@ -106,7 +106,7 @@ fi
 
 # Patch embedding config AFTER gbrain init — init always overwrites config.json,
 # so we must patch after it runs, not before.
-CONFIG_FILE="$HOME/.gbrain/config.json"
+CONFIG_FILE="${GBRAIN_HOME:-$HOME}/.gbrain/config.json"
 mkdir -p "$(dirname "$CONFIG_FILE")"
 if [ "$EMBEDDING_FLAG" != "--no-embedding" ]; then
   echo "Patching embedding config into $CONFIG_FILE (post-init)..."
