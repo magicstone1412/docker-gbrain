@@ -22,8 +22,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # --- Custom / self-hosted endpoint (optional) ---
       # Point at an OpenAI- or Anthropic-compatible gateway instead of the
-      # public API. entrypoint.sh auto-appends /v1 if you forget it
-      # (works around gbrain issue #1250 — bare host causes a 404).
+      # public API. The entrypoint and upstream gateway normalize missing /v1.
+      # This supports custom endpoints that reject bare-host requests.
       # ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}

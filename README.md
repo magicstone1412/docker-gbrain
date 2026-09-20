@@ -23,7 +23,7 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 | `VOYAGE_API_KEY` | Default embedding provider (`voyage-4`, 1024 dimensions). | 1st |
 | `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 2nd |
 | `ANTHROPIC_API_KEY` | Optional. Can be the default chat provider for autopilot LLM phases and enables Claude Haiku query expansion. | — |
-| `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `60`. | — |
+| `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `900` when running `docker run` directly; the included `docker-compose.yml` overrides it to `60`. | — |
 | `AUTOPILOT_ENABLED` | Optional. Set to `true` to run `gbrain autopilot` as a background daemon. Monitors brain health and runs overnight enrichment automatically. Default: `false`. | — |
 | `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
 
