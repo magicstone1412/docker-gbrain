@@ -278,14 +278,15 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     touch "$GBRAIN_ENV_FILE"
     chmod 600 "$GBRAIN_ENV_FILE"
     for var in VOYAGE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_BASE_URL OPENAI_BASE_URL; do
-      eval val=\$$var
+      val=$(printenv "$var" 2>/dev/null || true)
       [ -z "$val" ] && continue
-      if grep -q "^${var}=" "$GBRAIN_ENV_FILE" 2>/dev/null; then
-        sed -i "s|^${var}=.*|${var}=${val}|" "$GBRAIN_ENV_FILE"
-      else
-        printf '%s=%s\n' "$var" "$val" >> "$GBRAIN_ENV_FILE"
-      fi
+      tmp_env=$(mktemp "${GBRAIN_ENV_FILE}.XXXXXX")
+      grep -v "^${var}=" "$GBRAIN_ENV_FILE" > "$tmp_env" || true
+      printf '%s=%s\n' "$var" "$val" >> "$tmp_env"
+      chmod 600 "$tmp_env"
+      mv "$tmp_env" "$GBRAIN_ENV_FILE"
     done
+    chmod 600 "$GBRAIN_ENV_FILE"
     echo "  synced $(grep -c '=' "$GBRAIN_ENV_FILE" 2>/dev/null || echo 0) key(s) into $GBRAIN_ENV_FILE"
 
     # The container-mode artifact --install produces is itself executable
