@@ -239,17 +239,17 @@ done) &
 #    Requires at least one embedding API key — autopilot runs embed phases
 #    that are no-ops (or harmful) without a configured embedding provider.
 #
-#    IMPORTANT (per gbrain skills/setup/SKILL.md): there is no "run autopilot
-#    in the foreground with a flag" mode. `gbrain autopilot --install` is the
-#    only entry point, and on ephemeral containers (Docker/Render/Railway/Fly)
-#    it does NOT start a background process itself — it writes
-#    ~/.gbrain/start-autopilot.sh and expects the container's own bootstrap
-#    (this entrypoint) to source it on every start. We do that below.
+#    Autopilot can also run directly: `gbrain autopilot` starts the foreground
+#    daemon loop, and `gbrain autopilot --inline` runs maintenance inline rather
+#    than through the Minion queue. `--install` is not the only entry point; it
+#    installs a long-lived daemon for launchd, systemd, cron, or containers.
+#    On container/ephemeral targets it creates ~/.gbrain/start-autopilot.sh,
+#    an executable that self-backgrounds with `nohup`; this entrypoint executes
+#    it directly on every container start.
 #
-#    ALSO IMPORTANT (per v0.46.27.0 release notes): the daemon wrapper reads
-#    keys from ~/.gbrain/env, not from the process environment — daemon
-#    supervisors never source shell rc/compose env. So we mirror the relevant
-#    *_API_KEY / *_BASE_URL vars into that file before installing.
+#    The daemon wrapper inherits process environment, then sources shell
+#    profiles, then ~/.gbrain/env last. Mirroring keys into that file gives
+#    non-interactive daemon runs a deterministic override channel.
 # ---------------------------------------------------------------------------
 HAS_EMBEDDING_KEY=false
 if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
@@ -261,9 +261,10 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     GBRAIN_ENV_FILE="$HOME/.gbrain/env"
     mkdir -p "$(dirname "$GBRAIN_ENV_FILE")"
 
-    # First install (or re-install/reload) so the template + start script
-    # exist. Safe to re-run every container start — v0.46.27.0+ makes
-    # --install idempotent and reload-safe.
+    # Regenerate the wrapper and env template on every container start.
+    # On ephemeral targets this does not reload a running daemon: it keeps its
+    # old environment until the container restarts or it is killed and relaunched.
+    # Reinstall reloads a running daemon only on launchd and systemd targets.
     echo "Installing/reloading autopilot..."
     gbrain autopilot --install || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
 
@@ -281,13 +282,6 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
       fi
     done
     echo "  synced $(grep -c '=' "$GBRAIN_ENV_FILE" 2>/dev/null || echo 0) key(s) into $GBRAIN_ENV_FILE"
-
-    # NOTE: `gbrain autopilot` has no --max-usd / spend-cap flag or config key
-    # as of 0.48.5.0 (confirmed via `gbrain --help` and `config get autopilot`
-    # returning "not found"). AUTOPILOT_MAX_USD is exported for forward
-    # compatibility only — it currently has no effect. Track real spend via
-    # /root/.gbrain/audit/ once autopilot has ticked.
-    export AUTOPILOT_MAX_USD="${AUTOPILOT_MAX_USD:-1}"
 
     # The container-mode artifact --install produces is itself executable
     # with a #!/bin/bash shebang and self-backgrounds via its own
