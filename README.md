@@ -237,7 +237,7 @@ The entrypoint performs these steps every time the container starts:
 9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
 10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
 11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically.
-12. Starts the job worker (`gbrain jobs work`) required for Postgres-backed async job processing.
+12. Lets an enabled `gbrain autopilot` daemon manage its own job worker for Postgres-backed async job processing.
 13. Starts the HTTP MCP server.
 
 Some initialization commands are allowed to fail without stopping the container, which makes repeated starts tolerant after the first successful setup.
@@ -264,5 +264,5 @@ Some initialization commands are allowed to fail without stopping the container,
 - Runs a background sync/embed loop on a configurable interval.
 - Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
 - Optionally starts `gbrain autopilot` as a background daemon when `AUTOPILOT_ENABLED=true`.
-- Starts the job worker (`gbrain jobs work`) to process async Minion/subagent jobs from the Postgres queue.
+- Lets an enabled `gbrain autopilot` daemon manage its own job worker for Postgres-backed async job processing.
 - Starts the HTTP MCP server on `0.0.0.0:7333`.
