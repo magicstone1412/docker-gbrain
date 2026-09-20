@@ -285,7 +285,7 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
       [ -z "$val" ] && continue
       tmp_env=$(mktemp "${GBRAIN_ENV_FILE}.XXXXXX")
       grep -v "^${var}=" "$GBRAIN_ENV_FILE" > "$tmp_env" || true
-      escaped_val=$(printf '%s' "$val" | sed "s/'/'\\\\\\\\''/g")
+      escaped_val=$(printf '%s' "$val" | sed "s/'/'\\\\''/g")
       printf "%s='%s'\n" "$var" "$escaped_val" >> "$tmp_env"
       chmod 600 "$tmp_env"
       mv "$tmp_env" "$GBRAIN_ENV_FILE"
