@@ -25,7 +25,6 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 | `ANTHROPIC_API_KEY` | Optional. Enables query expansion via Claude Haiku to improve search quality. | — |
 | `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `60`. | — |
 | `AUTOPILOT_ENABLED` | Optional. Set to `true` to run `gbrain autopilot` as a background daemon. Monitors brain health and runs overnight enrichment automatically. Default: `false`. | — |
-| `AUTOPILOT_MAX_USD` | Optional. Maximum LLM spend per autopilot tick (USD). Default: `5`. Only used when `AUTOPILOT_ENABLED=true`. | — |
 | `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
 
 **Embedding provider selection priority:** `VOYAGE_API_KEY` → `OPENAI_API_KEY`.
@@ -59,7 +58,6 @@ docker run --rm \
   #-e ANTHROPIC_API_KEY="sk-ant-..." \
   -e SYNC_INTERVAL="300" \
   #-e AUTOPILOT_ENABLED="true" \
-  #-e AUTOPILOT_MAX_USD="5" \
   -p 7333:7333 \
   -v gbrain-data:/data/brain \
   docker-gbrain
@@ -92,7 +90,6 @@ VOYAGE_API_KEY=pa-...
 # ANTHROPIC_API_KEY=sk-ant-...
 SYNC_INTERVAL=300
 # AUTOPILOT_ENABLED=true
-# AUTOPILOT_MAX_USD=5
 ```
 
 ## Docker Compose Example
@@ -122,7 +119,6 @@ services:
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
       # --- Autopilot daemon ---
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-false}
-      AUTOPILOT_MAX_USD: ${AUTOPILOT_MAX_USD:-5}
     ports:
       - "7333:7333"
     volumes:
@@ -240,7 +236,7 @@ The entrypoint performs these steps every time the container starts:
 8. Updates the default source in Postgres to use `/data/brain`.
 9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
 10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
-11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically, with spend capped at `AUTOPILOT_MAX_USD`.
+11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically.
 12. Starts the job worker (`gbrain jobs work`) required for Postgres-backed async job processing.
 13. Starts the HTTP MCP server.
 
@@ -267,6 +263,6 @@ Some initialization commands are allowed to fail without stopping the container,
 - Starts an auto-commit watcher for `/data/brain`.
 - Runs a background sync/embed loop on a configurable interval.
 - Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
-- Optionally starts `gbrain autopilot` as a background daemon when `AUTOPILOT_ENABLED=true`, with LLM spend capped at `AUTOPILOT_MAX_USD`.
+- Optionally starts `gbrain autopilot` as a background daemon when `AUTOPILOT_ENABLED=true`.
 - Starts the job worker (`gbrain jobs work`) to process async Minion/subagent jobs from the Postgres queue.
 - Starts the HTTP MCP server on `0.0.0.0:7333`.
