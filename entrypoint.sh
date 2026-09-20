@@ -264,7 +264,7 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     echo "Autopilot daemon starting. NOTE: an embedding key alone does not guarantee a usable LLM chat provider."
     echo "chronicle/dream/enrich require Anthropic or OpenAI chat and no-op if none is available."
     echo "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or check 'gbrain autopilot --status' / autopilot.log after boot."
-    GBRAIN_DIR="${GBRAIN_HOME:+$GBRAIN_HOME/}.gbrain"
+    GBRAIN_DIR="${GBRAIN_HOME:-$HOME}/.gbrain"
     GBRAIN_ENV_FILE="$GBRAIN_DIR/env"
     START_SCRIPT="$GBRAIN_DIR/start-autopilot.sh"
     mkdir -p "$GBRAIN_DIR"
