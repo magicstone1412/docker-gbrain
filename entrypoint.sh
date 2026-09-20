@@ -254,6 +254,7 @@ done) &
 #    non-interactive daemon runs a deterministic override channel.
 # ---------------------------------------------------------------------------
 HAS_EMBEDDING_KEY=false
+AUTOPILOT_WORKER_OWNED=false
 if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
   HAS_EMBEDDING_KEY=true
 fi
@@ -301,10 +302,12 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
       echo "Starting autopilot via $START_SCRIPT ..."
       "$START_SCRIPT"
       echo "Autopilot started (pid $(cat "$GBRAIN_DIR/autopilot.pid" 2>/dev/null || echo '?'))."
+      AUTOPILOT_WORKER_OWNED=true
     elif [ -f "$START_SCRIPT" ]; then
       echo "Starting autopilot via $START_SCRIPT (via sh, not marked executable) ..."
       sh "$START_SCRIPT"
       echo "Autopilot started."
+      AUTOPILOT_WORKER_OWNED=true
     else
       echo "  [warn] $START_SCRIPT not found after --install — autopilot NOT running."
       echo "  Check 'gbrain autopilot --status' and container logs for the real cause."
@@ -318,9 +321,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. The autopilot daemon owns its worker when enabled
-#     Do not start a second `gbrain jobs work` here: autopilot's default worker
-#     supervisor avoids accidental duplicate workers and duplicate job cost.
+# 10. Start a standalone worker only when autopilot did not take ownership.
+#     This keeps async jobs processing when autopilot is disabled or skipped,
+#     while avoiding an uncoordinated second worker when autopilot is running.
+# ---------------------------------------------------------------------------
+if [ "$AUTOPILOT_WORKER_OWNED" = "false" ]; then
+  echo "Starting job worker..."
+  gbrain jobs work &
+  JOB_WORKER_PID=$!
+  echo "Job worker started (PID $JOB_WORKER_PID)"
+fi
+
 # ---------------------------------------------------------------------------
 # 11. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
