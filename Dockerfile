@@ -19,14 +19,20 @@ RUN set -eu; \
         echo "Unable to resolve a gbrain version tag from GBRAIN_TAG=${GBRAIN_TAG}" >&2; \
         exit 1; \
     fi; \
-    echo "Building gbrain from tag ${RESOLVED_GBRAIN_TAG}"; \
-    git clone --depth 1 --branch "${RESOLVED_GBRAIN_TAG}" https://github.com/garrytan/gbrain.git .
+    git clone --depth 1 --branch "${RESOLVED_GBRAIN_TAG}" https://github.com/garrytan/gbrain.git .; \
+    RESOLVED_GBRAIN_COMMIT="$(git rev-parse HEAD)"; \
+    printf 'tag=%s\ncommit=%s\n' "$RESOLVED_GBRAIN_TAG" "$RESOLVED_GBRAIN_COMMIT" > /app/.gbrain-build-info; \
+    echo "Building gbrain from tag ${RESOLVED_GBRAIN_TAG} (${RESOLVED_GBRAIN_COMMIT})"
 
 RUN bun install --frozen-lockfile --registry https://registry.npmjs.org
 RUN bun run build
 
 FROM oven/bun:latest
 WORKDIR /app
+
+ARG GBRAIN_TAG=latest
+LABEL org.opencontainers.image.source="https://github.com/garrytan/gbrain" \
+      org.gbrain.requested-tag="${GBRAIN_TAG}"
 
 RUN apt-get update && apt-get install -y git openssh-client netcat-openbsd postgresql-client jq && rm -rf /var/lib/apt/lists/*
 
