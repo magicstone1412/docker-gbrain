@@ -313,15 +313,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Start job worker (background)
-#    Required for Postgres engine — processes queued minion/subagent jobs.
-#    Without this, wedged_queue FAIL appears in gbrain doctor.
-# ---------------------------------------------------------------------------
-echo "Starting job worker..."
-gbrain jobs work &
-JOB_WORKER_PID=$!
-echo "Job worker started (PID $JOB_WORKER_PID)"
-
+# 10. The autopilot daemon owns its worker when enabled
+#     Do not start a second `gbrain jobs work` here: autopilot's default worker
+#     supervisor avoids accidental duplicate workers and duplicate job cost.
 # ---------------------------------------------------------------------------
 # 11. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
