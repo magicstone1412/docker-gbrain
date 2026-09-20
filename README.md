@@ -31,6 +31,8 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 If none of these are set, the container starts with `--no-embedding` and vector search is unavailable until a key is configured.
 
 > **Note:** `embedding_model` and `embedding_dimensions` are schema-level settings. If you change the provider after the first run, you must re-embed all content with `gbrain embed --stale`.
+>
+> **Optional `GBRAIN_HOME`:** set this absolute parent directory to keep gbrain state under `$GBRAIN_HOME/.gbrain` instead of `~/.gbrain`; the entrypoint uses the same location for autopilot files.
 
 ## Build
 

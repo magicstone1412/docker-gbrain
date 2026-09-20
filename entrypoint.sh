@@ -261,8 +261,10 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     echo "Autopilot daemon starting. NOTE: an embedding key alone does not guarantee a usable LLM chat provider."
     echo "chronicle/dream/enrich require Anthropic or OpenAI chat and no-op if none is available."
     echo "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or check 'gbrain autopilot --status' / autopilot.log after boot."
-    GBRAIN_ENV_FILE="$HOME/.gbrain/env"
-    mkdir -p "$(dirname "$GBRAIN_ENV_FILE")"
+    GBRAIN_DIR="${GBRAIN_HOME:+$GBRAIN_HOME/}.gbrain"
+    GBRAIN_ENV_FILE="$GBRAIN_DIR/env"
+    START_SCRIPT="$GBRAIN_DIR/start-autopilot.sh"
+    mkdir -p "$GBRAIN_DIR"
 
     # Regenerate the wrapper and env template on every container start.
     # On ephemeral targets this does not reload a running daemon: it keeps its
@@ -291,11 +293,10 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     # `nohup ... &`. Execute it directly (not `. sourced`) so bash — not
     # this sh/dash entrypoint — runs it, and don't double-background: the
     # script returns almost immediately after its internal nohup call.
-    START_SCRIPT="$HOME/.gbrain/start-autopilot.sh"
     if [ -x "$START_SCRIPT" ]; then
       echo "Starting autopilot via $START_SCRIPT ..."
       "$START_SCRIPT"
-      echo "Autopilot started (pid $(cat "$HOME/.gbrain/autopilot.pid" 2>/dev/null || echo '?'))."
+      echo "Autopilot started (pid $(cat "$GBRAIN_DIR/autopilot.pid" 2>/dev/null || echo '?'))."
     elif [ -f "$START_SCRIPT" ]; then
       echo "Starting autopilot via $START_SCRIPT (via sh, not marked executable) ..."
       sh "$START_SCRIPT"
