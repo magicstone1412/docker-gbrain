@@ -36,13 +36,13 @@ If none of these are set, the container starts with `--no-embedding` and vector 
 
 ## Build
 
-By default, the image resolves the newest upstream version tag from `garrytan/gbrain` and builds `gbrain` from that tagged source. The resolved tag and commit are printed at container startup; the image label records the requested `GBRAIN_TAG`. Because `latest` is resolved when you build, autopilot behavior can change between builds unless you pin `GBRAIN_TAG`.
+By default, the image resolves the newest upstream version tag from `garrytan/gbrain` and builds `gbrain` from that tagged source. The resolved tag and commit are printed at container startup; the image label records the requested `GBRAIN_TAG`. CI pins `GBRAIN_TAG` for reproducible published images; override it at build time to choose a specific version locally.
 
 ```sh
 docker build -t docker-gbrain .
 ```
 
-To pin a specific upstream tag:
+To build a specific upstream tag:
 
 ```sh
 docker build --build-arg GBRAIN_TAG=v0.45.2.0 -t docker-gbrain .
