@@ -24,6 +24,7 @@ Pass these as environment variables at runtime (via `-e` or `--env-file`). The e
 | `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 2nd |
 | `ANTHROPIC_API_KEY` | Optional. Can be the default chat provider for autopilot LLM phases and enables Claude Haiku query expansion. | — |
 | `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `900` when running `docker run` directly; the included `docker-compose.yml` overrides it to `60`. | — |
+| `EMBED_MAX_USD_PER_RUN` | Optional. Maximum USD allowed for each background embedding run. Default: `1`. This preapproves non-interactive paid embedding on gbrain `>= 0.60.46`. | — |
 | `AUTOPILOT_ENABLED` | Optional. Set to `true` to run `gbrain autopilot` as a background daemon. Monitors brain health and runs overnight enrichment automatically. Default: `false`. | — |
 | `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
 
@@ -59,6 +60,7 @@ docker run --rm \
   #-e OPENAI_API_KEY="sk-..." \
   #-e ANTHROPIC_API_KEY="sk-ant-..." \
   -e SYNC_INTERVAL="300" \
+  -e EMBED_MAX_USD_PER_RUN="1" \
   #-e AUTOPILOT_ENABLED="true" \
   -p 7333:7333 \
   -v gbrain-data:/data/brain \
@@ -91,6 +93,7 @@ VOYAGE_API_KEY=pa-...
 # OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
 SYNC_INTERVAL=300
+EMBED_MAX_USD_PER_RUN=1
 # AUTOPILOT_ENABLED=true
 ```
 
@@ -119,6 +122,7 @@ services:
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
+      EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN:-1}
       # --- Autopilot daemon ---
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-false}
     ports:
@@ -233,12 +237,12 @@ The entrypoint performs these steps every time the container starts:
 3. Detects the embedding provider from environment variables (Voyage → OpenAI → `--no-embedding`).
 4. Checks whether the `pages` table already exists to distinguish first-time init from migration-only startup.
 5. Runs `gbrain init --supabase --url "$DATABASE_URL"` with either the selected embedding model or `--no-embedding`.
-6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider (`voyage:voyage-4`, `1024d` by default).
+6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider (`voyage:voyage-4`, `1024d` by default), then configures paid-command preapproval for non-interactive embedding runs (default cap: `$1` per run).
 7. Ensures `/data/brain` is a Git repository with local commit identity configured.
 8. Updates the default source in Postgres to use `/data/brain`.
 9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
-10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
-11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically.
+10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale --max-usd "$EMBED_MAX_USD_PER_RUN"`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
+11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically. Its non-interactive installation is explicitly confirmed.
 12. Starts a standalone job worker when autopilot is disabled or skipped; an enabled autopilot daemon owns its worker.
 13. Starts the HTTP MCP server.
 
@@ -248,23 +252,3 @@ Some initialization commands are allowed to fail without stopping the container,
 
 - `Dockerfile` — builds the gbrain runtime image.
 - `entrypoint.sh` — handles database readiness, API key wiring, initialization, background sync, and server startup.
-
-## What This Image Does
-
-- Uses `oven/bun:latest` as the base image.
-- Installs `git`, `netcat-openbsd`, `postgresql-client`, and `jq`.
-- Resolves the newest upstream version tag from `garrytan/gbrain` and builds the `gbrain` binary from that tagged source.
-- Creates `/data/brain` as the persistent brain repository.
-- Waits for a Postgres host named `gbrain-postgres` on port `5432`.
-- Detects which embedding provider to use from environment variables (`voyage-4` → OpenAI).
-- Runs `gbrain init --supabase` with the appropriate embedding flag.
-- Lets `gbrain` read API keys directly from environment variables.
-- Patches `~/.gbrain/config.json` after init so the selected embedding model/dimensions persist.
-- Initializes `/data/brain` as a Git repository if needed.
-- Updates the default source path in Postgres to `/data/brain`.
-- Starts an auto-commit watcher for `/data/brain`.
-- Runs a background sync/embed loop on a configurable interval.
-- Runs `gbrain extract links` and `gbrain extract timeline` after each successful sync cycle.
-- Optionally starts `gbrain autopilot` as a background daemon when `AUTOPILOT_ENABLED=true`.
-- Starts a standalone job worker when autopilot is disabled or skipped; an enabled autopilot daemon owns its worker.
-- Starts the HTTP MCP server on `0.0.0.0:7333`.

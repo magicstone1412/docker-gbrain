@@ -120,6 +120,26 @@ if [ "$EMBEDDING_FLAG" != "--no-embedding" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 4b. Runtime settings that must be re-applied on every start
+#     (gbrain init rewrites config.json, so set them AFTER init).
+#
+#     EMBED_MAX_USD_PER_RUN: gbrain >= 0.60.46 asks for approval before any
+#       paid command and exits 3 (confirmation_required) when there is no
+#       terminal. A per-run preapproval (host-only setting) lets small paid
+#       runs proceed. Set to "" to disable. Default: 1 (USD).
+#
+#     `|| echo` keeps `set -e` from killing the container on older gbrain
+#     versions that don't know this key.
+# ---------------------------------------------------------------------------
+EMBED_MAX_USD_PER_RUN="${EMBED_MAX_USD_PER_RUN:-1}"
+
+if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
+  gbrain config set consent.preapprove.paid.max_usd_per_run "$EMBED_MAX_USD_PER_RUN" \
+    && echo "Embed preapproval: up to \$${EMBED_MAX_USD_PER_RUN} per paid run" \
+    || echo "  [warn] could not set consent.preapprove.paid.max_usd_per_run"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Ensure /data/brain is a Git repo with git config
 # ---------------------------------------------------------------------------
 echo "Configuring brain repo..."
@@ -217,11 +237,18 @@ done) &
 #    Set via -e SYNC_INTERVAL=300 in docker run or compose environment.
 # ---------------------------------------------------------------------------
 SYNC_INTERVAL="${SYNC_INTERVAL:-900}"
-echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s)..."
+# Explicit spend cap for the embed backfill: works without a terminal and does
+# not depend on the preapproval config surviving `gbrain init` (see 4b).
+EMBED_CAP_ARGS=""
+if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
+  EMBED_CAP_ARGS="--max-usd $EMBED_MAX_USD_PER_RUN"
+fi
+echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s, embed cap: ${EMBED_MAX_USD_PER_RUN:-none})..."
 (while true; do
   if gbrain sync --repo /data/brain; then
     if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
-      gbrain embed --stale || echo "[embed] embed failed, will retry next cycle"
+      # shellcheck disable=SC2086
+      gbrain embed --stale $EMBED_CAP_ARGS || echo "[embed] embed failed, will retry next cycle"
     else
       echo "[embed] skipped — no embedding API key set"
     fi
@@ -273,8 +300,16 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     # On ephemeral targets this does not reload a running daemon: it keeps its
     # old environment until the container restarts or it is killed and relaunched.
     # Reinstall reloads a running daemon only on launchd and systemd targets.
+    #
+    # gbrain >= 0.60.46 treats --install as a persistent_install effect and
+    # exits 3 (confirmation_required) without a terminal. AUTOPILOT_ENABLED=true
+    # is the operator's consent, so pass --yes. (Command taken from gbrain's own
+    # `if_yes` hint.) Without --yes the old start-autopilot.sh is reused only if
+    # it survived in the container filesystem; a recreated container would have
+    # no script and autopilot would silently not run.
     echo "Installing/reloading autopilot..."
-    gbrain autopilot --install || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
+    gbrain autopilot --install --yes --brain host \
+      || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
 
     # Mirror live container env into the daemon-owned env file (0600),
     # preserving any lines --install already wrote that we don't manage.
