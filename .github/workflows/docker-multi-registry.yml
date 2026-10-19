@@ -25,6 +25,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Read gbrain version
+        id: gbrain_version
+        run: echo "value=$(tr -d '[:space:]' < GBRAIN_VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -70,5 +74,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            GBRAIN_TAG=v0.60.310.0
+            GBRAIN_TAG=${{ steps.gbrain_version.outputs.value }}
           no-cache: true
