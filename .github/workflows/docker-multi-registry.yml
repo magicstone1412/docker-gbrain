@@ -70,5 +70,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            GBRAIN_TAG=v0.60.306.0
+            GBRAIN_TAG=v0.60.307.0
           no-cache: true
