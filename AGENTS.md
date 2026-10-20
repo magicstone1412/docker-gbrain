@@ -9,7 +9,7 @@ This repository is a Docker wrapper around upstream [`garrytan/gbrain`](https://
 - `Dockerfile` builds gbrain from an upstream tag and installs the runtime dependencies.
 - `GBRAIN_VERSION` is the CI pin (`v0.60.320.0` currently).
 - `entrypoint.sh` is the image's real entrypoint.
-- `docker-compose.yml` is a managed-mode deployment template: it references the published image `skywirex/gbrain:v0.60.310.0`, starts its own healthy `pgvector/pgvector:pg16` database, and bind-mounts local state, brain, gbrain config, and SSH keys.
+- `docker-compose.yml` is a managed-mode deployment template: it references the published image `skywirex/gbrain:latest` (the tag must include the current entrypoint with `GBRAIN_MODE` support), starts its own healthy `pgvector/pgvector:pg16` database, and bind-mounts local state, brain, gbrain config, and SSH keys.
 - `README.md` is the user-facing source of truth for runtime variables and deployment caveats.
 
 ## Validation
@@ -42,7 +42,7 @@ git status --short
 - `GBRAIN_MODE=managed` disables auto-commit and runs `gbrain sync --source default --no-pull`.
 - Both modes run stale embedding on successful sync when an embedding key is configured. `SYNC_INTERVAL` defaults to 900 seconds; `EMBED_MAX_USD_PER_RUN` defaults to 1 USD.
 - `AUTOPILOT_ENABLED=true` requires an embedding key. Autopilot may own the job worker; otherwise the entrypoint starts `gbrain jobs work`.
-- The foreground process is `gbrain serve --http --port 7333 --bind 0.0.0.0`.
+- The foreground process is `gbrain serve --http --port 7333 --bind 0.0.0.0`; an optional `GBRAIN_PUBLIC_URL` is appended as `--public-url` so the OAuth issuer matches the URL clients actually call.
 
 ## Secrets and SSH
 

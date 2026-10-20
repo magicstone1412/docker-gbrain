@@ -8,7 +8,7 @@ This repository contains the image build and the runtime entrypoint. The checked
 
 - `Dockerfile` — multi-stage Bun image build. By default it resolves the newest upstream `v*` tag; CI passes the pinned value from `GBRAIN_VERSION`.
 - `entrypoint.sh` — database initialization, embedding configuration, brain-repository setup, sync/embed jobs, optional autopilot, job worker, and the foreground MCP server.
-- `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:v0.60.310.0` image.
+- `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:latest` image.
 - `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.320.0` currently).
 
 ## Requirements
@@ -81,6 +81,7 @@ Supported runtime variables:
 | `GBRAIN_MODE` | `classic` | `classic` uses the Git auto-commit/sync flow; `managed` uses `gbrain sync --source default --no-pull` and disables the auto-commit watcher. |
 | `AUTOPILOT_ENABLED` | `false` | Set to `true` to install and start gbrain's autopilot daemon. An embedding key is required; chat phases also need OpenAI or Anthropic. |
 | `BRAIN_REMOTE` | — | Optional SSH remote for the brain repository. |
+| `GBRAIN_PUBLIC_URL` | — | Optional URL that clients actually call; passed as `gbrain serve --public-url` so the OAuth issuer matches. |
 | `GBRAIN_HOME` | — | Optional parent directory for gbrain state; config is stored under `$GBRAIN_HOME/.gbrain`. |
 
 `gbrain init` rewrites its config, so the entrypoint patches the selected embedding model and dimensions after initialization. Changing providers on an existing database requires re-embedding, for example:
@@ -106,7 +107,7 @@ The entrypoint writes known hosts to `/tmp/known_hosts` because `/root/.ssh` is 
 
 The checked-in `docker-compose.yml` is a runnable managed-mode deployment template. It:
 
-- uses the published `skywirex/gbrain:v0.60.310.0` image rather than building this directory;
+- uses the published `skywirex/gbrain:latest` image rather than building this directory;
 - starts PostgreSQL `pgvector/pgvector:pg16` with database `gbrain`, user `gbrain`, and password `gbrain123`;
 - waits for the PostgreSQL health check before starting gbrain;
 - enables `GBRAIN_MODE=managed` and autopilot by default;

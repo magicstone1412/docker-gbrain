@@ -19,11 +19,25 @@ services:
       - gbrain-net
 
   gbrain:
-    image: skywirex/gbrain:v0.60.310.0
+    # IMPORTANT: this entrypoint (GBRAIN_MODE support) is baked into the image,
+    # so use a NEW tag. The old tag v0.60.310.0 holds the previous entrypoint,
+    # which ignores GBRAIN_MODE and would run the classic loops on a managed
+    # brain. Build and push this tag first (see Dockerfile); until then this
+    # fails loudly on pull instead of silently running the wrong entrypoint.
+    image: skywirex/gbrain:latest
+    init: true                # reap zombies and forward signals to the background loops
+    stop_grace_period: 60s    # let serve and workers drain before SIGKILL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     container_name: gbrain
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://gbrain:gbrain123@gbrain-postgres:5432/gbrain
+      # Changing this back to classic requires `gbrain sources writer deactivate`
+      # first; classic sync is refused on an activated managed brain.
       GBRAIN_MODE: managed
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -34,10 +48,12 @@ services:
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-600}
       # Maximum USD per non-interactive background embedding run.
-      EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN:-1}
+      EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN-1}
       # --- Autopilot daemon ---
       # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-true}
+      # Optional: URL that the Hermes host actually calls (OAuth issuer).
+      # GBRAIN_PUBLIC_URL: ${GBRAIN_PUBLIC_URL:-}
       # SSH remote URL — set as origin and tracked by the current branch.
       BRAIN_REMOTE: ${BRAIN_REMOTE:-}
       # Use a writable known_hosts because the ~/.ssh mount below is read-only.

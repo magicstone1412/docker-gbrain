@@ -1,4 +1,4 @@
-FROM oven/bun:latest AS builder
+FROM oven/bun:1.4.3 AS builder
 WORKDIR /app
 
 ARG GBRAIN_TAG=latest
@@ -41,7 +41,9 @@ RUN ln -s /app/bin/gbrain /usr/local/bin/gbrain \
     && mkdir -p /data/brain
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Strip CRLF line endings (a CRLF shebang makes the container fail to start
+# with "no such file or directory") and make the script executable.
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 VOLUME ["/data/brain"]
 EXPOSE 7333

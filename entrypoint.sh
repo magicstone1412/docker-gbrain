@@ -1,6 +1,16 @@
 #!/bin/sh
 set -e
 
+# Validate GBRAIN_MODE first, before touching Postgres or the brain repo.
+#   classic: legacy auto-commit watcher + `gbrain sync --repo`
+#   managed: the brain must already be claimed AND activated (gbrain sources
+#            writer claim/activate); gbrain serve is then the canonical owner.
+GBRAIN_MODE="${GBRAIN_MODE:-classic}"
+case "$GBRAIN_MODE" in
+  classic|managed) ;;
+  *) echo "Invalid GBRAIN_MODE: $GBRAIN_MODE (expected classic|managed)" >&2; exit 2 ;;
+esac
+
 echo "gbrain build: $(tr '\n' ' ' < /app/.gbrain-build-info)"
 
 # ---------------------------------------------------------------------------
@@ -97,11 +107,13 @@ fi
 
 if [ "$ALREADY_INITIALIZED" = "true" ]; then
   echo "Brain already initialized — running migrations only..."
-  printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" --no-embedding || true
+  printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" --no-embedding \
+    || echo "  [warn] gbrain init (migrations) exited non-zero — continuing; check 'gbrain doctor'"
 else
   echo "First-time initialization..."
   # shellcheck disable=SC2086
-  printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" $EMBEDDING_FLAG || true
+  printf '1\n' | gbrain init --supabase --url "$DATABASE_URL" $EMBEDDING_FLAG \
+    || echo "  [warn] gbrain init exited non-zero — continuing; check 'gbrain doctor'"
 fi
 
 # Patch embedding config AFTER gbrain init — init always overwrites config.json,
@@ -126,12 +138,13 @@ fi
 #     EMBED_MAX_USD_PER_RUN: gbrain >= 0.60.46 asks for approval before any
 #       paid command and exits 3 (confirmation_required) when there is no
 #       terminal. A per-run preapproval (host-only setting) lets small paid
-#       runs proceed. Set to "" to disable. Default: 1 (USD).
+#       runs proceed. Default: 1 (USD). Set EMBED_MAX_USD_PER_RUN to an empty
+#       string to disable (compose must use ${EMBED_MAX_USD_PER_RUN-1}).
 #
 #     `|| echo` keeps `set -e` from killing the container on older gbrain
 #     versions that don't know this key.
 # ---------------------------------------------------------------------------
-EMBED_MAX_USD_PER_RUN="${EMBED_MAX_USD_PER_RUN:-1}"
+EMBED_MAX_USD_PER_RUN="${EMBED_MAX_USD_PER_RUN-1}"
 
 if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
   gbrain config set consent.preapprove.paid.max_usd_per_run "$EMBED_MAX_USD_PER_RUN" \
@@ -212,8 +225,11 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Point Postgres default source at the mounted brain volume
 # ---------------------------------------------------------------------------
+# Only write when the value differs: on a managed brain the claim already
+# recorded this path, so an unconditional UPDATE on every start is a needless
+# direct write to the sources table.
 psql "$DATABASE_URL" -c \
-  "UPDATE sources SET local_path = '/data/brain' WHERE id = 'default';" \
+  "UPDATE sources SET local_path = '/data/brain' WHERE id = 'default' AND local_path IS DISTINCT FROM '/data/brain';" \
   2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -221,11 +237,6 @@ psql "$DATABASE_URL" -c \
 #    classic keeps the legacy auto-commit + repository sync behavior.
 #    managed leaves commits under managed persistence and uses coordinator sync.
 # ---------------------------------------------------------------------------
-GBRAIN_MODE="${GBRAIN_MODE:-classic}"
-case "$GBRAIN_MODE" in
-  classic|managed) ;;
-  *) echo "Invalid GBRAIN_MODE: $GBRAIN_MODE (expected classic|managed)" >&2; exit 2 ;;
-esac
 echo "GBrain mode: $GBRAIN_MODE"
 
 if [ "$GBRAIN_MODE" = "classic" ]; then
@@ -394,4 +405,12 @@ fi
 # 11. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
 echo "Starting MCP server..."
-exec gbrain serve --http --port 7333 --bind 0.0.0.0
+# GBRAIN_PUBLIC_URL (optional): URL that clients (e.g. a separate Hermes host)
+# actually call, so the OAuth issuer matches. Verify with `gbrain serve --help`
+# that --public-url exists on your gbrain version before setting it.
+SERVE_ARGS="--http --port 7333 --bind 0.0.0.0"
+if [ -n "${GBRAIN_PUBLIC_URL:-}" ]; then
+  SERVE_ARGS="$SERVE_ARGS --public-url $GBRAIN_PUBLIC_URL"
+fi
+# shellcheck disable=SC2086
+exec gbrain serve $SERVE_ARGS
