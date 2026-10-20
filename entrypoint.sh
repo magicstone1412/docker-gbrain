@@ -217,19 +217,31 @@ psql "$DATABASE_URL" -c \
   2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 7. Auto-commit watcher (every 30s)
-#    Commits any new/modified files so gbrain sync can pick them up.
+# 7. Runtime mode
+#    classic keeps the legacy auto-commit + repository sync behavior.
+#    managed leaves commits under managed persistence and uses coordinator sync.
 # ---------------------------------------------------------------------------
-echo "Starting auto-commit watcher..."
-(while true; do
-  sleep 30
-  cd /data/brain
-  if [ -n "$(git status --porcelain)" ]; then
-    git add .
-    git commit -m "auto: $(date '+%Y-%m-%d %H:%M:%S')" \
-      && echo "[auto-commit] changes committed"
-  fi
-done) &
+GBRAIN_MODE="${GBRAIN_MODE:-classic}"
+case "$GBRAIN_MODE" in
+  classic|managed) ;;
+  *) echo "Invalid GBRAIN_MODE: $GBRAIN_MODE (expected classic|managed)" >&2; exit 2 ;;
+esac
+echo "GBrain mode: $GBRAIN_MODE"
+
+if [ "$GBRAIN_MODE" = "classic" ]; then
+  echo "Starting auto-commit watcher..."
+  (while true; do
+    sleep 30
+    cd /data/brain
+    if [ -n "$(git status --porcelain)" ]; then
+      git add .
+      git commit -m "auto: $(date '+%Y-%m-%d %H:%M:%S')" \
+        && echo "[auto-commit] changes committed"
+    fi
+  done) &
+else
+  echo "Managed mode: auto-commit watcher disabled."
+fi
 
 # ---------------------------------------------------------------------------
 # 8. Sync + embed loop
@@ -243,9 +255,20 @@ EMBED_CAP_ARGS=""
 if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
   EMBED_CAP_ARGS="--max-usd $EMBED_MAX_USD_PER_RUN"
 fi
-echo "Starting sync+embed loop (interval: ${SYNC_INTERVAL}s, embed cap: ${EMBED_MAX_USD_PER_RUN:-none})..."
+echo "Starting sync+embed loop (mode: $GBRAIN_MODE, interval: ${SYNC_INTERVAL}s, embed cap: ${EMBED_MAX_USD_PER_RUN:-none})..."
 (while true; do
-  if gbrain sync --repo /data/brain; then
+  if [ "$GBRAIN_MODE" = "managed" ]; then
+    if gbrain sync --source default --no-pull; then
+      SYNC_OK=true
+    else
+      SYNC_OK=false
+    fi
+  elif gbrain sync --repo /data/brain; then
+    SYNC_OK=true
+  else
+    SYNC_OK=false
+  fi
+  if [ "$SYNC_OK" = "true" ]; then
     if [ -n "$VOYAGE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
       # shellcheck disable=SC2086
       gbrain embed --stale $EMBED_CAP_ARGS || echo "[embed] embed failed, will retry next cycle"

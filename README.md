@@ -1,256 +1,147 @@
 # docker-gbrain
 
-Docker image wrapper for [gbrain](https://github.com/garrytan/gbrain), packaged as a Bun-based container with a persistent local brain repository and an HTTP MCP server.
+Docker wrapper for [gbrain](https://github.com/garrytan/gbrain). The image builds gbrain from upstream source, initializes it against PostgreSQL, persists the brain as a Git repository, and exposes gbrain's HTTP MCP server on port `7333`.
 
-The image builds `gbrain` from source, initializes it against a Postgres database, starts background sync for the local brain repo, and serves the MCP endpoint on port `7333`.
+This repository contains the image build and the runtime entrypoint. The checked-in Compose file is a managed-mode deployment template for the published image.
+
+## What is in this repository
+
+- `Dockerfile` — multi-stage Bun image build. By default it resolves the newest upstream `v*` tag; CI passes the pinned value from `GBRAIN_VERSION`.
+- `entrypoint.sh` — database initialization, embedding configuration, brain-repository setup, sync/embed jobs, optional autopilot, job worker, and the foreground MCP server.
+- `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:v0.60.310.0` image.
+- `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.320.0` currently).
 
 ## Requirements
 
-- Docker
-- A reachable Postgres database
-- A `DATABASE_URL` environment variable
-- A Postgres container or DNS host named `gbrain-postgres`
-- At least one embedding API key (see below)
+- Docker with BuildKit/Buildx.
+- PostgreSQL with the `pgvector` extension.
+- A `DATABASE_URL` reachable from the container.
+- The PostgreSQL host must be resolvable as `gbrain-postgres` because the entrypoint's readiness check is hard-coded to `gbrain-postgres:5432`, even when `DATABASE_URL` uses another host.
+- An embedding key is optional, but without one vector search and background embedding are disabled.
 
-The entrypoint waits for `gbrain-postgres:5432`, so the Postgres service must be reachable by that name from inside the container.
+## Build the image
 
-## API Keys
-
-Pass these as environment variables at runtime (via `-e` or `--env-file`). The entrypoint reports which keys are present, `gbrain` reads them directly from the environment, and the container selects the correct embedding provider automatically.
-
-| Variable | Purpose | Priority |
-|---|---|---|
-| `VOYAGE_API_KEY` | Default embedding provider (`voyage-4`, 1024 dimensions). | 1st |
-| `OPENAI_API_KEY` | Fallback embedding (`text-embedding-3-large`); also used for chat models. | 2nd |
-| `ANTHROPIC_API_KEY` | Optional. Can be the default chat provider for autopilot LLM phases and enables Claude Haiku query expansion. | — |
-| `SYNC_INTERVAL` | Optional. Seconds between `sync` cycles. Default: `900` when running `docker run` directly; the included `docker-compose.yml` overrides it to `60`. | — |
-| `EMBED_MAX_USD_PER_RUN` | Optional. Maximum USD allowed for each background embedding run. Default: `1`. This preapproves non-interactive paid embedding on gbrain `>= 0.60.46`. | — |
-| `AUTOPILOT_ENABLED` | Optional. Set to `true` to run `gbrain autopilot` as a background daemon. Monitors brain health and runs overnight enrichment automatically. Default: `false`. | — |
-| `BRAIN_REMOTE` | Optional. SSH remote URL for the brain repo (e.g. `git@github.com:you/brain.git`). Set as `origin` so `gbrain sync` can pull & push. See [Private Brain Repo (SSH)](#private-brain-repo-ssh). | — |
-
-**Embedding provider selection priority:** `VOYAGE_API_KEY` → `OPENAI_API_KEY`.
-If none of these are set, the container starts with `--no-embedding` and vector search is unavailable until a key is configured.
-
-> **Note:** `embedding_model` and `embedding_dimensions` are schema-level settings. If you change the provider after the first run, you must re-embed all content with `gbrain embed --stale`.
->
-> **Optional `GBRAIN_HOME`:** set this absolute parent directory to keep gbrain state under `$GBRAIN_HOME/.gbrain` instead of `~/.gbrain`; the entrypoint uses the same location for autopilot files.
-
-## Build
-
-By default, the image resolves the newest upstream version tag from `garrytan/gbrain` and builds `gbrain` from that tagged source. The resolved tag and commit are printed at container startup; the image label records the requested `GBRAIN_TAG`. CI reads the pinned version from [`GBRAIN_VERSION`](GBRAIN_VERSION) for reproducible published images; override `GBRAIN_TAG` at build time to choose a specific version locally.
+Build the local image with the default upstream resolution:
 
 ```sh
 docker build -t docker-gbrain .
 ```
 
-To build a specific upstream tag:
+Build a specific upstream tag:
 
 ```sh
-docker build --build-arg GBRAIN_TAG=v0.45.2.0 -t docker-gbrain .
+docker build --build-arg GBRAIN_TAG=v0.60.320.0 -t docker-gbrain .
 ```
 
-To change the version published by CI, update `GBRAIN_VERSION` to the desired upstream tag.
+For reproducible CI builds, change `GBRAIN_VERSION`. The GitHub Actions workflow builds and publishes `linux/amd64` and `linux/arm64` images to GHCR and Docker Hub.
 
-## Run
+## Run with Docker
 
-```sh
-docker run --rm \
-  --name gbrain \
-  --network gbrain-network \
-  -e DATABASE_URL="postgres://user:password@gbrain-postgres:5432/gbrain" \
-  -e VOYAGE_API_KEY="pa-..." \
-  #-e OPENAI_API_KEY="sk-..." \
-  #-e ANTHROPIC_API_KEY="sk-ant-..." \
-  -e SYNC_INTERVAL="300" \
-  -e EMBED_MAX_USD_PER_RUN="1" \
-  #-e AUTOPILOT_ENABLED="true" \
-  -p 7333:7333 \
-  -v gbrain-data:/data/brain \
-  docker-gbrain
-```
-
-If `gbrain` is already running in Docker and you want to execute commands inside the container, use:
-
-```sh
-docker exec -ti gbrain /bin/bash
-```
-
-You can also pass keys from a file:
+Create a Docker network and make PostgreSQL available as `gbrain-postgres`, then run:
 
 ```sh
 docker run --rm \
   --name gbrain \
-  --network gbrain-network \
-  --env-file .env \
+  --network gbrain-net \
+  -e DATABASE_URL='postgresql://user:password@gbrain-postgres:5432/gbrain' \
+  -e VOYAGE_API_KEY='pa-...' \
   -p 7333:7333 \
-  -v gbrain-data:/data/brain \
+  -v gbrain-brain:/data/brain \
   docker-gbrain
 ```
 
-Example `.env` file:
+The server is available at `http://localhost:7333` and the MCP endpoint is normally `http://localhost:7333/mcp`.
 
-```env
-DATABASE_URL=postgres://user:password@gbrain-postgres:5432/gbrain
-VOYAGE_API_KEY=pa-...
-# OPENAI_API_KEY=sk-...
-# ANTHROPIC_API_KEY=sk-ant-...
-SYNC_INTERVAL=300
-EMBED_MAX_USD_PER_RUN=1
-# AUTOPILOT_ENABLED=true
-```
-
-## Docker Compose Example
-
-```yaml
-services:
-  gbrain-postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: gbrain
-      POSTGRES_PASSWORD: gbrain
-      POSTGRES_DB: gbrain
-    volumes:
-      - gbrain-postgres-data:/var/lib/postgresql/data
-    networks:
-      - gbrain-network
-
-  gbrain:
-    build: .
-    depends_on:
-      - gbrain-postgres
-    environment:
-      DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
-      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
-      EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN:-1}
-      # --- Autopilot daemon ---
-      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-false}
-    ports:
-      - "7333:7333"
-    volumes:
-      - gbrain-data:/data/brain
-    networks:
-      - gbrain-network
-
-volumes:
-  gbrain-postgres-data:
-  gbrain-data:
-
-networks:
-  gbrain-network:
-```
-
-Start with:
+To inspect the running container:
 
 ```sh
-# export keys first (or put them in a .env file in the same directory)
+docker exec -it gbrain /bin/bash
+```
+
+### Embedding and model variables
+
+The entrypoint chooses the embedding provider in this order:
+
+1. `VOYAGE_API_KEY` → `voyage:voyage-4`, 1024 dimensions.
+2. `OPENAI_API_KEY` → `openai:text-embedding-3-large`, 3072 dimensions.
+3. Neither key → `--no-embedding`.
+
+Supported runtime variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | — | PostgreSQL connection string; required. |
+| `VOYAGE_API_KEY` | — | Voyage embedding provider. |
+| `OPENAI_API_KEY` | — | OpenAI embedding provider and chat provider. |
+| `ANTHROPIC_API_KEY` | — | Optional chat provider for autopilot. |
+| `OPENAI_BASE_URL` | — | Optional OpenAI-compatible endpoint; a missing `/v1` suffix is added. |
+| `ANTHROPIC_BASE_URL` | — | Optional Anthropic-compatible endpoint; a missing `/v1` suffix is added. |
+| `SYNC_INTERVAL` | `900` | Seconds between sync/embed cycles. |
+| `EMBED_MAX_USD_PER_RUN` | `1` | Per-run cap passed to background embedding. Set empty to disable the cap. |
+| `GBRAIN_MODE` | `classic` | `classic` uses the Git auto-commit/sync flow; `managed` uses `gbrain sync --source default --no-pull` and disables the auto-commit watcher. |
+| `AUTOPILOT_ENABLED` | `false` | Set to `true` to install and start gbrain's autopilot daemon. An embedding key is required; chat phases also need OpenAI or Anthropic. |
+| `BRAIN_REMOTE` | — | Optional SSH remote for the brain repository. |
+| `GBRAIN_HOME` | — | Optional parent directory for gbrain state; config is stored under `$GBRAIN_HOME/.gbrain`. |
+
+`gbrain init` rewrites its config, so the entrypoint patches the selected embedding model and dimensions after initialization. Changing providers on an existing database requires re-embedding, for example:
+
+```sh
+gbrain embed --stale
+```
+
+## Persistent brain and SSH remotes
+
+Mount `/data/brain`; it is initialized as a Git repository on first startup and its `default` PostgreSQL source is pointed at that path.
+
+For a private SSH remote, mount host keys read-only and set `BRAIN_REMOTE`:
+
+```sh
+-e BRAIN_REMOTE='git@github.com:you/brain.git' \
+-v "$HOME/.ssh:/root/.ssh:ro"
+```
+
+The entrypoint writes known hosts to `/tmp/known_hosts` because `/root/.ssh` is read-only. It configures `origin` and branch tracking when keys are present. Without keys, the repository remains local-only. Linux host key permissions work most reliably; Docker Desktop may expose permissions that SSH rejects.
+
+## Docker Compose
+
+The checked-in `docker-compose.yml` is a runnable managed-mode deployment template. It:
+
+- uses the published `skywirex/gbrain:v0.60.310.0` image rather than building this directory;
+- starts PostgreSQL `pgvector/pgvector:pg16` with database `gbrain`, user `gbrain`, and password `gbrain123`;
+- waits for the PostgreSQL health check before starting gbrain;
+- enables `GBRAIN_MODE=managed` and autopilot by default;
+- uses `SYNC_INTERVAL=600` seconds by default;
+- bind-mounts `./state` at `/data`, `./brain` at `/data/brain`, `./.config` at `/root/.gbrain`, and `${HOME}/.ssh` read-only at `/root/.ssh`;
+- exposes port `7333` on all host interfaces; restrict it with a firewall or bind it to a private interface.
+
+Start it with:
+
+```sh
 export VOYAGE_API_KEY=pa-...
 docker compose up -d
 ```
 
-## Persistent Data
+Optional values can be placed in a `.env` file, including `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `SYNC_INTERVAL`, `EMBED_MAX_USD_PER_RUN`, `AUTOPILOT_ENABLED`, and `BRAIN_REMOTE`. The Compose database password is a development default; change it before using the stack outside a trusted environment.
 
-The container declares `/data/brain` as a volume. Mount this path to keep the local brain repository across container rebuilds and restarts.
+The Compose service uses the published image. To test changes to the local `Dockerfile` and `entrypoint.sh`, build the image and run it directly as shown above, or change the Compose service to use `build: .` and the local image deliberately.
 
-```sh
--v gbrain-data:/data/brain
-```
+## Startup behavior
 
-On first startup, the entrypoint initializes this directory as a Git repository and creates an empty initial commit.
+`entrypoint.sh` performs the following:
 
-## Private Brain Repo (SSH)
+1. Waits for `gbrain-postgres:5432`.
+2. Reports configured API keys and normalizes custom OpenAI/Anthropic base URLs.
+3. Detects an existing database by checking for the `pages` table.
+4. Runs `gbrain init` or migrations, then reapplies embedding and paid-run settings.
+5. Initializes `/data/brain` as Git and points the default database source to it.
+6. Runs either the classic auto-commit watcher or managed sync mode.
+7. Periodically syncs and embeds stale content when an embedding key is available.
+8. Optionally starts autopilot. If autopilot does not own the worker, starts `gbrain jobs work`.
+9. Runs `gbrain serve --http --port 7333 --bind 0.0.0.0` in the foreground.
 
-If your brain repo lives on a **private** Git remote, the container needs SSH
-credentials to pull and push. Containers can't share the host's `ssh-agent`, so
-the host's SSH keys are mounted read-only and used directly.
+Initialization commands that are safe to repeat are intentionally tolerant of non-zero exits so an existing installation can restart.
 
-The provided `docker-compose.yml` already wires this up:
+## Security notes
 
-```yaml
-    environment:
-      # SSH remote URL — set as origin and tracked by the current branch.
-      BRAIN_REMOTE: ${BRAIN_REMOTE:-}
-      # Use a writable known_hosts because the ~/.ssh mount below is read-only.
-      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
-    volumes:
-      - ${HOME}/.ssh:/root/.ssh:ro
-```
-
-Run with the remote set (Linux host):
-
-```sh
-export BRAIN_REMOTE=git@github.com:you/brain.git
-docker compose up -d --build
-```
-
-On startup the entrypoint:
-
-1. Detects keys at `/root/.ssh` (the mounted host keys).
-2. Seeds `/tmp/known_hosts` for `github.com` via `ssh-keyscan` so the first
-   pull doesn't fail host-key verification (`accept-new` covers other hosts).
-3. Sets `origin` to `BRAIN_REMOTE` (if provided) and makes the current branch
-   track it, so the background sync loop can pull & push.
-
-Notes:
-
-- **Linux host only.** Bind-mounted key permissions are preserved on Linux, and
-  the container runs as `root` so it can read the user's keys. On Windows/macOS
-  Docker Desktop, the `:ro` mount may expose keys with permissions SSH rejects.
-- The mount is **read-only** — the host keys are never modified.
-- If `BRAIN_REMOTE` is omitted but the volume already has an `origin`, the
-  existing remote is used as-is.
-- Without any SSH keys, the brain repo is treated as **local-only** and the
-  sync loop's `git pull` warning (`Already up to date.`) is harmless.
-
-## MCP Server
-
-The container exposes port `7333` and starts:
-
-```sh
-gbrain serve --http --port 7333 --bind 0.0.0.0
-```
-
-After the container is running, the HTTP MCP server is available on:
-
-```
-http://localhost:7333
-```
-
-## Tích hợp vào Hermes Agent
-
-Thêm cấu hình sau vào Hermes để kết nối tới MCP server của `gbrain`:
-
-```yaml
-mcp_servers:
-  gbrain:
-    headers:
-      Authorization: Bearer ${GBRAIN_TOKEN}
-    url: http://gbrain:7333/mcp
-```
-
-## Startup Flow
-
-The entrypoint performs these steps every time the container starts:
-
-1. Waits until `gbrain-postgres:5432` accepts connections.
-2. Reports which API keys are present in the environment.
-3. Detects the embedding provider from environment variables (Voyage → OpenAI → `--no-embedding`).
-4. Checks whether the `pages` table already exists to distinguish first-time init from migration-only startup.
-5. Runs `gbrain init --supabase --url "$DATABASE_URL"` with either the selected embedding model or `--no-embedding`.
-6. Patches `~/.gbrain/config.json` after init so `embedding_model` and `embedding_dimensions` match the selected provider (`voyage:voyage-4`, `1024d` by default), then configures paid-command preapproval for non-interactive embedding runs (default cap: `$1` per run).
-7. Ensures `/data/brain` is a Git repository with local commit identity configured.
-8. Updates the default source in Postgres to use `/data/brain`.
-9. Starts an auto-commit watcher that commits file changes in `/data/brain` every 30 seconds.
-10. Starts a background loop that runs `gbrain sync --repo /data/brain`, then `gbrain embed --stale --max-usd "$EMBED_MAX_USD_PER_RUN"`, `gbrain extract links --source db`, and `gbrain extract timeline --source db` on each successful cycle.
-11. Starts the `gbrain autopilot` daemon if `AUTOPILOT_ENABLED=true` — monitors brain health score and runs overnight enrichment (entity sweep, citation fixes, memory consolidation) automatically. Its non-interactive installation is explicitly confirmed.
-12. Starts a standalone job worker when autopilot is disabled or skipped; an enabled autopilot daemon owns its worker.
-13. Starts the HTTP MCP server.
-
-Some initialization commands are allowed to fail without stopping the container, which makes repeated starts tolerant after the first successful setup.
-
-## Files
-
-- `Dockerfile` — builds the gbrain runtime image.
-- `entrypoint.sh` — handles database readiness, API key wiring, initialization, background sync, and server startup.
+- The Compose example uses a development database password and publishes MCP on `0.0.0.0`; change both for anything beyond a trusted network.
+- Never commit API keys, SSH keys, `.config`, `brain`, or runtime state. These paths are ignored by `.gitignore`.

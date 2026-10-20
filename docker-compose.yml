@@ -1,58 +1,69 @@
+---
 services:
   gbrain-postgres:
     image: pgvector/pgvector:pg16
+    container_name: gbrain-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: gbrain
-      POSTGRES_PASSWORD: gbrain
       POSTGRES_DB: gbrain
+      POSTGRES_USER: gbrain
+      POSTGRES_PASSWORD: gbrain123
     volumes:
-      - gbrain-postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gbrain -d gbrain"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
-      - gbrain-network
+      - gbrain-net
 
   gbrain:
-    build: .
-    depends_on:
-      - gbrain-postgres
+    image: skywirex/gbrain:v0.60.310.0
+    container_name: gbrain
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://gbrain:gbrain@gbrain-postgres:5432/gbrain
+      DATABASE_URL: postgresql://gbrain:gbrain123@gbrain-postgres:5432/gbrain
+      GBRAIN_MODE: managed
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # Needed for full autopilot LLM phases when using Voyage-only embeddings.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # --- Custom / self-hosted endpoint (optional) ---
-      # Point at an OpenAI- or Anthropic-compatible gateway instead of the
-      # public API. The entrypoint and upstream gateway normalize missing /v1.
-      # This supports custom endpoints that reject bare-host requests.
-      # ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      SYNC_INTERVAL: ${SYNC_INTERVAL:-60}
+      # Optional. Uncomment if you don't set OPENAI_API_KEY above — autopilot's
+      # chat-dependent phases (chronicle/dream/enrich) need Anthropic OR OpenAI;
+      # VOYAGE_API_KEY alone only satisfies the embedding requirement.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-600}
       # Maximum USD per non-interactive background embedding run.
       EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN:-1}
       # --- Autopilot daemon ---
       # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
-      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-false}
-      # --- Private brain repo over SSH ---
-      # SSH remote URL for the brain repo. The entrypoint sets it as origin
-      # and makes the current branch track it so `gbrain sync` can pull & push.
+      AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-true}
+      # SSH remote URL — set as origin and tracked by the current branch.
       BRAIN_REMOTE: ${BRAIN_REMOTE:-}
-      # Force git to use a writable known_hosts (the ~/.ssh mount below is :ro).
+      # Use a writable known_hosts because the ~/.ssh mount below is read-only.
       GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
     ports:
+      # Reachable from the separate Hermes host over the network. Since this
+      # is no longer loopback/internal-bridge-only, restrict at the firewall
+      # (or bind a private VPN/Tailscale IP instead of 0.0.0.0) to only the
+      # Hermes machine's address.
       - "7333:7333"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - gbrain-data:/data/brain
-      # Mount host SSH keys read-only so the container can auth to the private
-      # repo. Linux host: ${HOME} resolves to the user running compose.
+      - ./state:/data
+      - ./brain:/data/brain
+      - ./.config:/root/.gbrain
       - ${HOME}/.ssh:/root/.ssh:ro
+    depends_on:
+      gbrain-postgres:
+        condition: service_healthy
     networks:
-      - gbrain-network
-
-volumes:
-  gbrain-postgres-data:
-  gbrain-data:
+      - gbrain-net
 
 networks:
-  gbrain-network:
+  gbrain-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
