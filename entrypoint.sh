@@ -465,6 +465,27 @@ if [ "$AUTOPILOT_WORKER_OWNED" = "false" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 10b. Managed mode: report (read-only) whether the owner will commit and push.
+#      git_durability is a per-host-binding setting stored in the database. Only
+#      the operator can change it, with the trusted local CLI:
+#        gbrain sources writer git-durability <source> --enable --dry-run
+#        gbrain sources writer git-durability <source> --enable \
+#          --admin-intent writer_git_durability --expected-state <admin_state>
+#      This script deliberately never changes it: startup checks must leave
+#      ownership administration alone. It only warns, because with durability
+#      off the owner still writes page files but leaves them uncommitted.
+# ---------------------------------------------------------------------------
+if [ "$GBRAIN_MODE" = "managed" ]; then
+  WRITER_STATUS=$(gbrain sources writer status "$GBRAIN_SOURCE_ID" --brain host --json 2>/dev/null || true)
+  if printf '%s' "$WRITER_STATUS" | grep -Eq '"git_durability"[[:space:]]*:[[:space:]]*"on"'; then
+    echo "Git durability: on (the owner commits and pushes page writes)"
+  else
+    echo "  [warn] managed mode: git_durability is not 'on' for source '$GBRAIN_SOURCE_ID' (or the status could not be read)."
+    echo "         Page writes are saved as files but may stay UNCOMMITTED. Operator action: gbrain sources writer git-durability $GBRAIN_SOURCE_ID --enable --dry-run"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 11. Start MCP server (foreground / PID 1)
 # ---------------------------------------------------------------------------
 echo "Starting MCP server..."
