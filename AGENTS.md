@@ -40,6 +40,7 @@ git status --short
 - `/data/brain` is persistent user content. Startup points the default database source there and initializes/configures it as a Git repository.
 - `GBRAIN_MODE=classic` (default) starts the 30-second auto-commit watcher and runs `gbrain sync --repo /data/brain`.
 - `GBRAIN_MODE=managed` disables auto-commit and runs `gbrain sync --source default --no-pull`.
+- `GBRAIN_REFRESH_UPSTREAM=true` (managed mode only, default false) runs `gbrain sources refresh <source>` before each sync cycle, fast-forwarding the checkout to origin. It is ignored in classic mode or without an `origin` remote, and a refused or failed refresh never stops the subsequent sync.
 - Both modes run stale embedding on successful sync when an embedding key is configured. `SYNC_INTERVAL` defaults to 900 seconds; `EMBED_MAX_USD_PER_RUN` defaults to 1 USD.
 - `AUTOPILOT_ENABLED=true` requires an embedding key. Autopilot may own the job worker; otherwise the entrypoint starts `gbrain jobs work`.
 - The foreground process is `gbrain serve --http --port 7333 --bind 0.0.0.0`; an optional `GBRAIN_PUBLIC_URL` is appended as `--public-url` so the OAuth issuer matches the URL clients actually call.

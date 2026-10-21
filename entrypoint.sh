@@ -36,6 +36,17 @@ case "$GBRAIN_SOURCE_ID" in
   ""|*[!A-Za-z0-9._-]*) echo "Invalid GBRAIN_SOURCE_ID: $GBRAIN_SOURCE_ID (only A-Za-z0-9._- are allowed)" >&2; exit 2 ;;
 esac
 
+# GBRAIN_REFRESH_UPSTREAM (managed mode only, default false): before every sync
+# cycle run `gbrain sources refresh <source>`, the only way a managed checkout
+# takes new upstream commits (for example commits pushed from another machine).
+# A managed brain never runs `git pull` itself, and autopilot never runs
+# `sources refresh`, so without this the checkout falls behind origin.
+GBRAIN_REFRESH_UPSTREAM="${GBRAIN_REFRESH_UPSTREAM:-false}"
+case "$GBRAIN_REFRESH_UPSTREAM" in
+  true|false) ;;
+  *) echo "Invalid GBRAIN_REFRESH_UPSTREAM: $GBRAIN_REFRESH_UPSTREAM (expected true|false)" >&2; exit 2 ;;
+esac
+
 echo "gbrain build: $(tr '\n' ' ' < /app/.gbrain-build-info)"
 
 # ---------------------------------------------------------------------------
@@ -329,8 +340,39 @@ EMBED_CAP_ARGS=""
 if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
   EMBED_CAP_ARGS="--max-usd $EMBED_MAX_USD_PER_RUN"
 fi
+# Upstream refresh is only meaningful on a managed brain whose checkout tracks a
+# remote. A failed or refused refresh never stops the cycle: like upstream's
+# scheduled recipe (`gbrain sources refresh <id>; gbrain sync --no-pull ...`) the
+# sync still runs afterwards, which also lets it finish an unfinished cursor
+# that a refresh may have refused on (sync_in_progress).
+REFRESH_ENABLED=false
+if [ "$GBRAIN_REFRESH_UPSTREAM" = "true" ]; then
+  if [ "$GBRAIN_MODE" != "managed" ]; then
+    echo "  [warn] GBRAIN_REFRESH_UPSTREAM=true ignored: only used in managed mode (classic sync pulls by itself)"
+  elif ! git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
+    echo "  [warn] GBRAIN_REFRESH_UPSTREAM=true ignored: $BRAIN_DIR has no 'origin' remote to refresh from"
+  else
+    REFRESH_ENABLED=true
+  fi
+fi
+echo "Upstream refresh before each sync cycle: $REFRESH_ENABLED"
+
+refresh_upstream() {
+  echo "[refresh] gbrain sources refresh $GBRAIN_SOURCE_ID (drain writes, fast-forward to origin, sync)..."
+  rc=0
+  gbrain sources refresh "$GBRAIN_SOURCE_ID" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "[refresh] done"
+  else
+    echo "[refresh] refused or failed (exit $rc); continuing with sync. Cause: gbrain sources refresh $GBRAIN_SOURCE_ID --dry-run"
+  fi
+}
+
 echo "Starting sync+embed loop (mode: $GBRAIN_MODE, interval: ${SYNC_INTERVAL}s, embed cap: ${EMBED_MAX_USD_PER_RUN:-none})..."
 (while true; do
+  if [ "$REFRESH_ENABLED" = "true" ]; then
+    refresh_upstream
+  fi
   if [ "$GBRAIN_MODE" = "managed" ]; then
     if gbrain sync --source "$GBRAIN_SOURCE_ID" --no-pull; then
       SYNC_OK=true

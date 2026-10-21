@@ -79,6 +79,7 @@ Supported runtime variables:
 | `SYNC_INTERVAL` | `900` | Seconds between sync/embed cycles. |
 | `EMBED_MAX_USD_PER_RUN` | `1` | Per-run cap passed to background embedding. Set empty to disable the cap. |
 | `GBRAIN_MODE` | `classic` | `classic` uses the Git auto-commit/sync flow; `managed` uses `gbrain sync --source default --no-pull` and disables the auto-commit watcher. |
+| `GBRAIN_REFRESH_UPSTREAM` | `false` | Managed mode only: runs `gbrain sources refresh <source>` (fast-forward to origin) before each sync cycle, so commits pushed to the remote from another machine reach this checkout. Ignored without an `origin` remote; a refused or failed refresh never stops the sync. |
 | `AUTOPILOT_ENABLED` | `false` | Set to `true` to install and start gbrain's autopilot daemon. An embedding key is required; chat phases also need OpenAI or Anthropic. |
 | `BRAIN_REMOTE` | — | Optional SSH remote for the brain repository. |
 | `GBRAIN_PUBLIC_URL` | — | Optional URL that clients actually call; passed as `gbrain serve --public-url` so the OAuth issuer matches. |
