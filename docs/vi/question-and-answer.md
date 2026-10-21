@@ -1,71 +1,202 @@
-Câu hỏi: nếu tôi commit repo brain sang một máy khác và commit trên máy đó và push lên github thì vấn đề gì sẽ xảy ra?
+# Q&A: đồng bộ brain từ nhiều máy
 
-Câu trả lời phụ thuộc vào cách gbrain xử lý commit từ xa khi nó là owner. Đọc mục "worktree refresh refusals" của upstream để trả lời chính xác thay vì suy đoán.
+Tài liệu này trả lời trường hợp `/data/brain` được lưu trong Git và có một máy khác clone repository đó để chỉnh sửa rồi push lên remote (ví dụ GitHub).
 
-Có chuyện xảy ra, nhưng không có gì bị mất. Bản đọc gần nhất của tôi là `topologies.md` và `write-refusals.md` ở v0.60.310.0. Phần "worktree refresh refusals", chỗ mô tả `gbrain sources refresh` có thể từ chối khi nào, bị cắt khỏi trang tôi đọc nên tôi chưa đọc, và tôi ghi rõ chỗ đó bên dưới.
+> **Phạm vi:** Nội dung tập trung vào `GBRAIN_MODE=managed`, là chế độ Compose sử dụng. Các lệnh và hành vi có thể thay đổi theo phiên bản gbrain; khi xử lý sự cố, ưu tiên thông báo lỗi và tài liệu của đúng phiên bản đang chạy.
 
-## Điều gì xảy ra khi máy kia push lên `master`
+## Tóm tắt ngắn
 
-**1. Brain host không tự biết.** Brain managed không bao giờ chạy `git pull` trong chu kỳ tự động. Tài liệu ghi rằng một lệnh `gbrain sync` tường minh không có `--no-pull` bị từ chối với `writer_coordinator_required`, còn chu kỳ không giám sát thì sync checkout như hiện có và chỉ báo cáo. Entrypoint của bạn cũng dùng `--no-pull`. Doctor (`sync_freshness`) sẽ báo "upstream N commit(s) ahead" thay vì tự cập nhật.
+- Một commit được push từ máy khác **không tự động xuất hiện** trong checkout của brain host ở managed mode.
+- Cách upstream hỗ trợ để đưa commit từ remote vào managed checkout là:
 
-**2. Cách đưa commit từ xa vào:** `gbrain sources refresh <source>`. Lệnh này chặn ghi vào checkout, fast-forward tới upstream, rồi chạy managed sync cho mọi source gắn với checkout đó. Chỉ fast-forward, nên chỉ chạy được khi lịch sử không phân kỳ (xem mục 3).
+  ```sh
+  gbrain sources refresh default
+  ```
 
-**3. Chỗ nguy hiểm là phân kỳ.** Owner commit và push HEAD sau mỗi lần ghi trang, nhưng nó không bao giờ pull hay rebase checkout; push bị remote từ chối thì được thử lại, và sau nhiều lần thất bại thì bị "park". Nếu máy kia push trước, rồi Hermes ghi một trang mới trên brain host trong lúc commit local chưa kịp push, hai bên có commit mà bên kia không có. Khi đó push của owner bị từ chối, sau 5 lần liên tiếp nó bị park (`parked_effects` của doctor): trang vẫn được ghi và commit local, nhưng bản sao lưu Git của nó chưa trọn vẹn. `refresh` bằng fast-forward cũng không thể gộp. Tôi chưa đọc cách upstream xử lý trường hợp này nên không đưa lệnh cứu; hãy đọc mục "worktree refresh refusals" trong `write-refusals.md` và backup `brain/` trước khi làm gì. Tuyệt đối không `git pull --rebase`, `git reset` hay `git checkout` trên đường dẫn trang trong checkout của brain host: upstream nói rõ owner không pull và việc di chuyển file dưới chân nó chính là điều `source_changed` bảo vệ.
+  Sau đó chạy sync không pull:
 
-**4. Xung đột nội dung.**
-- Máy kia sửa một trang mà DB cũng đã đổi: owner dừng lại thay vì ghi đè (`file_database_drift`). Cả file lẫn bản trong DB đều không bị ghi đè.
-- Commit từ xa chưa được sync nhập vào: trang đó ở trạng thái `pending_import`, và các ghi như `put_page` vào trang đó bị từ chối cho tới khi chạy `gbrain sync --source <source> --no-pull`. Hermes sẽ thấy lỗi khi ghi vào trang đang chờ.
-- Atom suy ra từ trang gốc bị đánh dấu stale (`origin_changed`, như bạn đã thấy lúc trước).
+  ```sh
+  gbrain sync --source default --no-pull
+  ```
 
-**5. Push tay không qua bước quét bí mật** của owner (bước quét bí mật không chạy với push tay), nên hãy tự kiểm tra trước khi push từ máy kia.
+- Trong wrapper này, có thể bật tự động refresh trước mỗi chu kỳ sync bằng:
 
-## Khuyến nghị theo thứ tự
+  ```env
+  GBRAIN_REFRESH_UPSTREAM=true
+  ```
 
-1. **Dùng máy kia làm client MCP** (`put_page`/`edit_page` qua Hermes hoặc công cụ khác), không làm peer Git. Đây là đường upstream thiết kế cho managed brain.
-2. **Nếu chỉ cần đọc hay soạn bằng editor:** clone chỉ-đọc (chỉ `git pull`, không commit lên `master`).
-3. **Nếu bắt buộc commit từ máy kia:**
-   - Trên máy kia: `git pull --rebase` trước **mỗi** lần push; chỉ thêm file mới hoặc sửa file mà owner không đang ghi; commit nhỏ.
-   - Trên brain host, ngay sau khi push xong: `gbrain sources refresh default`, rồi `gbrain sync --source default --no-pull`.
-   - Kiểm tra: `gbrain doctor --only sync_freshness` và `gbrain doctor --only parked_effects`.
-   - Không để owner ghi trong lúc bạn làm việc đó (tạm dừng Hermes). Cửa sổ phân kỳ nhỏ nhất khi không ai ghi.
+- **Không dùng `git pull`, `git pull --rebase`, `git reset` hoặc sửa trực tiếp các file page trong managed checkout.** Managed worktree có owner/coordinator riêng; ghi Git trực tiếp có thể bị từ chối hoặc làm database và checkout lệch nhau.
+- Cách an toàn nhất để thay đổi nội dung từ máy khác là dùng máy đó làm **MCP client** và ghi qua gbrain, thay vì coi brain host và máy kia là hai Git writer ngang hàng.
 
-## Một cải thiện cho entrypoint (chưa làm)
+## Câu hỏi: Tôi push một commit từ máy khác. Brain host có tự nhận biết không?
 
-Entrypoint r3 dùng `--no-pull` nên commit từ xa không tự vào. Tôi có thể thêm vòng `gbrain sources refresh` định kỳ (có biến bật/tắt, mặc định tắt) để brain host tự đuổi theo `origin`. Tôi chưa xác minh cú pháp và các từ chối của `refresh`, nên nếu bạn muốn, tôi sẽ đọc mục "worktree refresh refusals" trước rồi mới viết, thay vì đoán.
+Không, nếu brain host đang ở managed mode.
 
-Trước khi viết, tôi đọc mục "worktree refresh refusals" mà trang trước bị cắt mất, để vòng `refresh` dựa trên tài liệu chứ không phải suy đoán.
+Entrypoint của repository này chạy:
 
-Tôi chạy thử vòng lặp thật (đoạn trích nguyên văn từ file) với `gbrain`, `git` và `sleep` giả lập, chạy đúng một vòng.
+```sh
+gbrain sync --source default --no-pull
+```
 
-Tôi đã triển khai xong bản r4 trong `gbrain-wrapper-r4/`. Vòng refresh định kỳ mặc định tắt, nên chạy bình thường nếu bạn không bật. `sh -n` và `shellcheck` sạch, YAML hợp lệ. Tôi đã chạy đoạn vòng lặp thật trích nguyên văn từ file, với `gbrain`, `git` và `sleep` giả lập, nhưng chưa chạy `docker build` hay container thật.
+Lệnh này không tự pull hoặc fast-forward checkout từ remote. Vì vậy, sau khi máy khác push lên `origin`, brain host có thể vẫn dùng checkout cũ và `gbrain doctor` có thể báo remote đang đi trước một số commit.
 
-## Những gì đã thêm
+Nếu `GBRAIN_REFRESH_UPSTREAM=false` (mặc định), cần refresh thủ công trên brain host:
 
-**Biến `GBRAIN_REFRESH_UPSTREAM`** (`true|false`, mặc định `false`; giá trị khác bị từ chối ngay đầu file với exit 2). Khi bật, trong mỗi chu kỳ sync (cứ `SYNC_INTERVAL`, mặc định 600 giây) entrypoint chạy `gbrain sources refresh default` **trước** `gbrain sync --source default --no-pull`. Đây đúng là thứ tự upstream khuyến nghị cho brain managed.
+```sh
+gbrain sources refresh default
+gbrain sync --source default --no-pull
+```
 
-Hành vi tôi thử với từng kịch bản:
-- Managed, bật, có `origin`: chạy refresh, rồi sync, rồi embed, đúng thứ tự.
-- Refresh **lỗi hoặc bị từ chối**: ghi `[refresh] refused or failed (exit N)` kèm gợi ý `sources refresh default --dry-run`, rồi vẫn chạy sync. Việc này có chủ ý: sync cũng có thể gỡ trạng thái `sync_in_progress` khiến refresh từ chối.
-- Mặc định (tắt): không đổi gì so với r3.
-- Classic, hoặc managed nhưng repo không có remote `origin`: cảnh báo "bị bỏ qua" và không chạy refresh.
+`refresh` sẽ đưa checkout tiến lên theo kiểu **fast-forward** và đồng bộ các thay đổi vào database. Nó không phải là merge tùy ý.
 
-Compose r4 thêm `GBRAIN_REFRESH_UPSTREAM: ${GBRAIN_REFRESH_UPSTREAM:-false}` và đổi tag image thành `...-r4`.
+## Câu hỏi: Có thể để container tự lấy commit mới không?
 
-## Trước khi bật
+Có. Đặt biến môi trường:
 
-1. **Commit `RESOLVER.md` trước.** Sau khi bật git durability, file này bị sửa chưa commit. Refresh từ chối với `refresh_dirty` khi checkout có thay đổi chồng lên vùng commit sắp vào; tôi chỉ đọc được mã này qua issue (#6846), chưa đọc tài liệu đầy đủ về nó.
-2. **Chạy thử bằng tay một lần** trong container: `gbrain sources refresh default --dry-run`. Lệnh này cho thấy nó sẽ làm gì và từ chối ở đâu mà không thay đổi gì.
-3. **Hermes có thể bị từ chối ngắn** (`worktree_refreshing`) trong lúc refresh chặn ghi để fast-forward. Mã này nằm trong danh sách lỗi managed mà upstream liệt kê, nhưng tôi chưa biết thời gian chặn thường kéo dài bao lâu. Nếu Hermes không tự thử lại, cần dặn nó thử lại.
-4. Bật bằng cách thêm `GBRAIN_REFRESH_UPSTREAM=true` vào `.env` rồi recreate. Log khởi động phải có `Upstream refresh before each sync cycle: true`.
+```env
+GBRAIN_REFRESH_UPSTREAM=true
+```
 
-## Cách kiểm tra khi chạy thật
+Trong Compose, có thể thêm biến này vào `.env`, sau đó recreate service:
 
-Từ một clone khác, push một file mới lên `master`. Trong khoảng một chu kỳ (tối đa `SYNC_INTERVAL`), log phải có `[refresh] done`, file xuất hiện trong `~/docker/gbrain/brain`, và `gbrain get <slug>` trả về trang. Kiểm tra thêm `gbrain doctor --only sync_freshness` (không còn "upstream N commit(s) ahead") và `parked_effects`.
+```sh
+docker compose up -d --force-recreate gbrain
+```
 
-## Những điều tôi chưa xác minh
+Khi bật, trước mỗi chu kỳ sync, entrypoint thực hiện theo thứ tự:
 
-- Danh sách đầy đủ 12 mã từ chối của refresh và cách xử lý từng mã: mục "worktree refresh refusals" nằm ngoài tầm đọc của công cụ. Tôi chỉ biết `refresh_diverged`, `refresh_dirty`, `sync_in_progress`, `worktree_refreshing`, `writer_coordinator_required` qua PR và issue. Vì vậy vòng lặp chỉ ghi log lỗi chứ không tự sửa gì.
-- Có issue (#6834) mô tả vòng bế tắc: refresh bị `sync_in_progress` còn sync không gỡ được cursor. Nếu bạn thấy `[refresh] refused` lặp lại nhiều chu kỳ, đó là chỗ cần xem, và log cũng ghi lệnh `--dry-run` để lấy nguyên nhân.
-- Tên tag `v0.60.310.0-r4` có thể gây hiểu nhầm, vì container của bạn chạy 0.60.329.0. Hãy xem `docker compose exec gbrain cat /app/.gbrain-build-info` rồi build với `--build-arg GBRAIN_TAG=<đúng phiên bản đó>` và đặt tên tag khớp với nó.
+1. `gbrain sources refresh default`;
+2. `gbrain sync --source default --no-pull`;
+3. embed nội dung stale nếu đã cấu hình embedding key.
 
-Trình tự triển khai giống lần trước (build, push, `docker run ... od -c` kiểm tra shebang không có `\r`, rồi `docker compose up -d --force-recreate gbrain` khi Hermes đang tạm dừng ingest). Muốn tôi viết prompt cho agent thực hiện việc này (kiểm tra SQL `local_path`, build, recreate, đối chiếu log và `writer status`) thì nói tôi biết.
+`SYNC_INTERVAL` mặc định của entrypoint là `900` giây; Compose đặt mặc định là `600` giây.
+
+Refresh chỉ được bật khi:
+
+- `GBRAIN_MODE=managed`; và
+- checkout có remote tên `origin`.
+
+Nếu refresh bị lỗi hoặc bị từ chối, entrypoint chỉ ghi log rồi vẫn chạy sync. Xem nguyên nhân chi tiết bằng:
+
+```sh
+gbrain sources refresh default --dry-run
+```
+
+Biến này bị bỏ qua trong classic mode hoặc khi repository không có `origin`.
+
+## Câu hỏi: Nếu máy khác commit trực tiếp lên brain repository thì có an toàn không?
+
+Không nên xem đó là quy trình bình thường trong managed mode.
+
+Trong managed mode, gbrain coi checkout canonical là một **managed worktree**. Các thay đổi page nên đi qua persistence coordinator của gbrain (`put_page`, `edit_page`, `remember`, MCP...), để database, file và Git durability được cập nhật theo đúng thứ tự.
+
+Một commit trực tiếp từ máy khác có thể tạo ra các tình huống sau:
+
+### 1. Commit chỉ làm remote đi trước
+
+Nếu brain host chưa ghi gì mới, `sources refresh` thường có thể fast-forward checkout tới commit của máy kia. Sau đó sync sẽ import thay đổi vào database.
+
+### 2. Hai phía cùng có commit — lịch sử bị phân kỳ
+
+Ví dụ:
+
+1. Máy khác push commit `A` lên remote.
+2. Brain host tiếp tục ghi page và tạo commit local `B` trước khi nhận `A`.
+3. Remote và checkout local không còn quan hệ fast-forward đơn giản.
+
+Khi đó:
+
+- push của owner có thể bị từ chối;
+- `sources refresh` có thể bị từ chối vì lịch sử đã diverged hoặc checkout đang bận;
+- page vẫn có thể đã được ghi vào database/file local, nhưng Git backup hoặc việc đồng bộ remote có thể đang chờ xử lý;
+- các effect thất bại lặp lại có thể bị park và xuất hiện trong `gbrain doctor` dưới `parked_effects`.
+
+Đây là vấn đề về **Git durability**, không nên xử lý bằng cách tự ý rebase/reset checkout đang được gbrain quản lý.
+
+### 3. Hai phía sửa cùng một page
+
+Nếu file và database cùng thay đổi theo các hướng khác nhau, gbrain có thể từ chối thao tác với lỗi như `file_database_drift` thay vì âm thầm ghi đè một phía.
+
+Nếu commit từ remote đã được nhìn thấy nhưng chưa được import, thao tác ghi vào page đó có thể bị từ chối với trạng thái tương tự `pending_import`. Hãy hoàn tất refresh/sync và đọc chính xác `suggestion` trong lỗi trước khi thử lại.
+
+## Câu hỏi: Quy trình an toàn nếu vẫn bắt buộc dùng máy khác để push là gì?
+
+Giảm tối đa thời gian hai writer cùng hoạt động:
+
+1. **Ưu tiên dùng MCP/gbrain để ghi nội dung**, không commit page trực tiếp từ clone khác.
+2. Nếu chỉ cần đọc hoặc soạn nháp, dùng clone chỉ-đọc; không push vào branch canonical.
+3. Nếu bắt buộc phải commit từ máy khác:
+   - kiểm tra branch và remote trước khi sửa;
+   - cập nhật clone từ remote trước khi bắt đầu;
+   - chỉ sửa các file mà brain host không đang ghi;
+   - commit nhỏ, push sớm;
+   - tạm dừng các luồng ghi tự động trên brain host trong lúc chuyển đổi;
+   - sau khi push, chạy trên brain host:
+
+     ```sh
+     gbrain sources refresh default --dry-run
+     gbrain sources refresh default
+     gbrain sync --source default --no-pull
+     ```
+
+   - kiểm tra:
+
+     ```sh
+     gbrain doctor --only sync_freshness
+     gbrain doctor --only parked_effects
+     gbrain sources writer status default --brain host --json
+     ```
+
+`git pull --rebase` trên **clone riêng của máy kia** chỉ là thao tác chuẩn bị clone đó; không được chạy nó trong managed checkout mà gbrain đang dùng làm canonical worktree.
+
+## Câu hỏi: Nếu refresh bị từ chối thì tôi nên làm gì?
+
+Không tự ý xóa marker owner, sửa database, reset HEAD hoặc force-push. Trước tiên lấy lý do cụ thể:
+
+```sh
+gbrain sources refresh default --dry-run
+gbrain sources writer status default --brain host --json
+gbrain doctor --only sync_freshness
+gbrain doctor --only parked_effects
+```
+
+Một số nguyên nhân thường gặp:
+
+- **Lịch sử diverged:** local và remote đều có commit riêng. Cần xử lý theo hướng dẫn trong thông báo lỗi; không đoán bằng `git pull --rebase` trên canonical checkout.
+- **Checkout dirty:** có thay đổi chưa được gbrain owner xử lý. Xác định process tạo thay đổi trước khi làm sạch.
+- **Đang có sync/refresh khác:** chờ thao tác hiện tại kết thúc rồi thử lại.
+- **Writer chưa sẵn sàng hoặc bị từ chối:** kiểm tra `writer status` và dùng đúng lệnh coordinator mà lỗi chỉ ra.
+- **Git push bị lỗi hoặc effect bị park:** sửa nguyên nhân (credential, remote, branch protection...), rồi thực hiện recovery theo `suggestion` của gbrain. Không force-push để che lỗi.
+
+Nếu chưa rõ, hãy sao lưu database và toàn bộ thư mục `brain/` trước khi can thiệp. Database và Git checkout là hai lớp dữ liệu khác nhau; một lớp có thể đã chứa thay đổi dù lớp còn lại chưa hoàn tất.
+
+## Câu hỏi: Có khác biệt gì giữa classic và managed?
+
+| Chế độ | Cách xử lý chính | Phù hợp với |
+| --- | --- | --- |
+| `classic` | Entrypoint chạy auto-commit watcher và `gbrain sync --repo /data/brain`. | Container là writer duy nhất và Git workflow đơn giản. |
+| `managed` | Tắt auto-commit watcher; gbrain owner/coordinator quản lý việc ghi; sync dùng `--no-pull`. | Brain có ownership rõ ràng, persistence có điều phối và có thể có client MCP từ xa. |
+
+Trong managed mode, `gbrain serve` phải chạy với source đã được claim và activate. Không chuyển qua lại giữa hai mode khi writer vẫn đang hoạt động. Hãy làm theo runbook của upstream để quiesce, deactivate/activate và kiểm tra trạng thái.
+
+## Câu hỏi: Git remote có tự động bảo vệ dữ liệu khi tôi push thủ công không?
+
+Không hoàn toàn.
+
+Push thông qua persistence của gbrain có các bước durability và retry riêng. Một push thủ công từ clone khác không đi qua toàn bộ luồng đó; đặc biệt, secret scan hoặc các guard của owner có thể không áp dụng cho thao tác thủ công. Hãy kiểm tra secret, branch và nội dung trước khi push.
+
+Không commit các file sau vào repository:
+
+- API key, token hoặc credential;
+- SSH private key;
+- `.config`, runtime state hoặc dữ liệu nhạy cảm;
+- các file không thuộc brain nhưng vô tình nằm trong checkout.
+
+## Tài liệu upstream nên đọc khi xử lý sự cố
+
+- [Topologies — gbrain](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md): ownership, claim/activate và managed persistence.
+- [Shared-checkout Git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md): nguyên tắc không tự thao tác Git trên managed worktree và cách xử lý checkout/remote.
+- [Write refusals](https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md): mã lỗi, lý do từ chối và recovery suggestion.
+- [Troubleshooting](https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md): các lệnh doctor và chẩn đoán tình trạng sync/effect.
+
+Các trang upstream trên `master` có thể mô tả phiên bản mới hơn image đang chạy. Khi có khác biệt, dùng thông báo lỗi, `gbrain --version` và tài liệu đi kèm đúng phiên bản làm cơ sở.

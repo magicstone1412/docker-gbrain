@@ -1,71 +1,202 @@
-Question: if I copy the brain repo to another machine, commit on that machine, and push to GitHub, what happens?
+# Q&A: syncing a brain from multiple machines
 
-The answer depends on how gbrain handles remote commits while it is the owner. Read upstream's "worktree refresh refusals" section to answer precisely instead of guessing.
+This guide covers the case where `/data/brain` is stored in Git and another machine clones that repository, edits it, and pushes to a remote such as GitHub.
 
-Something happens, but nothing is lost. My most recent reading is of `topologies.md` and `write-refusals.md` at v0.60.310.0. The "worktree refresh refusals" part — where it describes when `gbrain sources refresh` may refuse — was cut off from the page I read, so I have not read it, and I say so explicitly below.
+> **Scope:** The examples focus on `GBRAIN_MODE=managed`, which is the mode used by this repository's Compose deployment. Commands and refusal details can change between gbrain releases; when troubleshooting, follow the error and recovery suggestion from the version you are running.
 
-## What happens when the other machine pushes to `master`
+## Short answer
 
-**1. The brain host does not find out by itself.** A managed brain never runs `git pull` in its automatic cycle. The docs say an explicit `gbrain sync` without `--no-pull` is refused with `writer_coordinator_required`, while the unsupervised cycle syncs the checkout as-is and only reports. Your entrypoint also uses `--no-pull`. Doctor (`sync_freshness`) will report "upstream N commit(s) ahead" instead of updating itself.
+- A commit pushed from another machine does **not automatically appear** in the brain host's checkout in managed mode.
+- The upstream-supported way to bring remote commits into a managed checkout is:
 
-**2. How to get the remote commit in:** `gbrain sources refresh <source>`. This command blocks writes to the checkout, fast-forwards to upstream, then runs a managed sync for every source attached to that checkout. Fast-forward only, so it can only run when the histories have not diverged (see point 3).
+  ```sh
+  gbrain sources refresh default
+  ```
 
-**3. The dangerous spot is divergence.** The owner commits and pushes HEAD after every page write, but it never pulls or rebases the checkout; a push rejected by the remote is retried, and after several failures it is "parked". If the other machine pushes first, and then Hermes writes a new page on the brain host while the local commit has not yet been pushed, both sides have commits the other side lacks. The owner's push is then rejected, and after 5 consecutive failures it is parked (doctor's `parked_effects`): the page is still written and committed locally, but its Git backup is incomplete. A fast-forward `refresh` cannot merge this either. I have not read how upstream handles this case, so I am not offering a rescue command; read the "worktree refresh refusals" section in `write-refusals.md` and back up `brain/` before doing anything. Absolutely do not `git pull --rebase`, `git reset`, or `git checkout` page paths inside the brain host's checkout: upstream is explicit that the owner does not pull, and moving files out from under it is exactly what `source_changed` protects against.
+  Then run the no-pull sync:
 
-**4. Content conflicts.**
-- The other machine edits a page the DB has also changed: the owner stops instead of overwriting (`file_database_drift`). Neither the file nor the DB copy is clobbered.
-- A remote commit not yet imported by sync: that page is in `pending_import` state, and writes such as `put_page` to that page are refused until you run `gbrain sync --source <source> --no-pull`. Hermes will see an error when writing to a pending page.
-- An atom derived from the original page is marked stale (`origin_changed`, as you saw before).
+  ```sh
+  gbrain sync --source default --no-pull
+  ```
 
-**5. A manual push bypasses the owner's secret scan** (the secret scan does not run on manual pushes), so check it yourself before pushing from the other machine.
+- This wrapper can refresh automatically before each sync cycle with:
 
-## Recommendations, in order
+  ```env
+  GBRAIN_REFRESH_UPSTREAM=true
+  ```
 
-1. **Use the other machine as an MCP client** (`put_page`/`edit_page` via Hermes or another tool), not as a Git peer. This is the path upstream designed for managed brains.
-2. **If you only need to read or draft in an editor:** use a read-only clone (only `git pull`, never commit to `master`).
-3. **If committing from the other machine is unavoidable:**
-   - On the other machine: `git pull --rebase` before **every** push; only add new files or edit files the owner is not currently writing; keep commits small.
-   - On the brain host, right after the push finishes: `gbrain sources refresh default`, then `gbrain sync --source default --no-pull`.
-   - Verify: `gbrain doctor --only sync_freshness` and `gbrain doctor --only parked_effects`.
-   - Keep the owner from writing while you do this (pause Hermes). The divergence window is smallest when nobody is writing.
+- **Do not run `git pull`, `git pull --rebase`, `git reset`, or manually edit page files in the managed checkout.** A managed worktree has its own owner/coordinator; direct Git writes may be refused or may leave the database and checkout out of sync.
+- The safest way to change content from another machine is to use that machine as an **MCP client** and write through gbrain, rather than treating the brain host and the other machine as equal Git writers.
 
-## An entrypoint improvement (not yet done)
+## Does the brain host notice when another machine pushes?
 
-Entrypoint r3 uses `--no-pull`, so remote commits never come in on their own. I can add a periodic `gbrain sources refresh` loop (with an on/off variable, default off) so the brain host chases `origin` by itself. I have not verified `refresh`'s syntax and its refusal modes, so if you want it, I will read the "worktree refresh refusals" section first before writing it, instead of guessing.
+Not by itself when the brain host is in managed mode.
 
-Before writing, I read the "worktree refresh refusals" section that the previous page had cut off, so the `refresh` loop is based on documentation rather than speculation.
+This repository's entrypoint runs:
 
-I dry-ran the real loop (verbatim excerpt from the file) with simulated `gbrain`, `git`, and `sleep`, running exactly one iteration.
+```sh
+gbrain sync --source default --no-pull
+```
 
-I have implemented the r4 version in `gbrain-wrapper-r4/`. The periodic refresh loop is off by default, so it runs normally if you do not enable it. `sh -n` and `shellcheck` are clean, and the YAML is valid. I ran the real loop excerpted verbatim from the file with simulated `gbrain`, `git`, and `sleep`, but I have not run `docker build` or a real container.
+That command does not pull or fast-forward the checkout from its remote. After another machine pushes to `origin`, the brain host may continue using the old checkout, and `gbrain doctor` may report that the upstream is ahead by one or more commits.
 
-## What was added
+With `GBRAIN_REFRESH_UPSTREAM=false` (the default), refresh it manually on the brain host:
 
-**The `GBRAIN_REFRESH_UPSTREAM` variable** (`true|false`, default `false`; any other value is rejected at the top of the file with exit 2). When enabled, in each sync cycle (every `SYNC_INTERVAL`, default 600 seconds) the entrypoint runs `gbrain sources refresh default` **before** `gbrain sync --source default --no-pull`. This is exactly the order upstream recommends for managed brains.
+```sh
+gbrain sources refresh default
+gbrain sync --source default --no-pull
+```
 
-Behavior I tested per scenario:
-- Managed, enabled, with `origin`: runs refresh, then sync, then embed, in that order.
-- Refresh **fails or is refused**: logs `[refresh] refused or failed (exit N)` with a hint to `sources refresh default --dry-run`, then still runs sync. This is intentional: sync can also clear the `sync_in_progress` state that made refresh refuse.
-- Default (off): no change from r3.
-- Classic, or managed but the repo has no `origin` remote: warns "ignored" and does not run refresh.
+`refresh` fast-forwards the checkout and synchronizes the changes into the database. It is not an arbitrary merge operation.
 
-Compose r4 adds `GBRAIN_REFRESH_UPSTREAM: ${GBRAIN_REFRESH_UPSTREAM:-false}` and changes the image tag to `...-r4`.
+## Can the container fetch new commits automatically?
 
-## Before enabling
+Yes. Set:
 
-1. **Commit `RESOLVER.md` first.** After git durability was enabled, this file was modified and left uncommitted. Refresh refuses with `refresh_dirty` when the checkout has changes overlapping the area the commit would enter; I only read this code through issue (#6846), not the full documentation.
-2. **Dry-run it once by hand** in the container: `gbrain sources refresh default --dry-run`. This shows what it would do and where it would refuse, without changing anything.
-3. **Hermes may be briefly refused** (`worktree_refreshing`) while refresh blocks writes to fast-forward. This code is in the managed error list upstream documents, but I do not know how long the block usually lasts. If Hermes does not retry on its own, it needs to be told to retry.
-4. Enable by adding `GBRAIN_REFRESH_UPSTREAM=true` to `.env` and then recreate. The startup log must show `Upstream refresh before each sync cycle: true`.
+```env
+GBRAIN_REFRESH_UPSTREAM=true
+```
 
-## How to verify in production
+With Compose, put this in `.env` and recreate the service:
 
-From a different clone, push a new file to `master`. Within one cycle (at most `SYNC_INTERVAL`), the log must show `[refresh] done`, the file must appear in `~/docker/gbrain/brain`, and `gbrain get <slug>` must return the page. Also check `gbrain doctor --only sync_freshness` (no longer "upstream N commit(s) ahead") and `parked_effects`.
+```sh
+docker compose up -d --force-recreate gbrain
+```
 
-## Things I have not verified
+When enabled, the entrypoint performs this sequence before each sync cycle:
 
-- The full list of 12 refresh refusal codes and how to handle each: the "worktree refresh refusals" section is outside my tool's reading range. I only know `refresh_diverged`, `refresh_dirty`, `sync_in_progress`, `worktree_refreshing`, and `writer_coordinator_required` from the PR and issue. So the loop only logs errors and does not self-heal anything.
-- There is an issue (#6834) describing a deadlock loop: refresh is stuck on `sync_in_progress` and sync cannot clear the cursor. If you see `[refresh] refused` repeat across many cycles, that is the spot to look at, and the log also prints the `--dry-run` command to get the cause.
-- The tag name `v0.60.310.0-r4` can be misleading, because your container runs 0.60.329.0. Check `docker compose exec gbrain cat /app/.gbrain-build-info`, then build with `--build-arg GBRAIN_TAG=<that exact version>` and name the tag to match it.
+1. `gbrain sources refresh default`;
+2. `gbrain sync --source default --no-pull`;
+3. stale embedding, if an embedding key is configured.
 
-The deployment sequence is the same as last time (build, push, `docker run ... od -c` to check the shebang has no `\r`, then `docker compose up -d --force-recreate gbrain` while Hermes is paused from ingesting). Tell me if you want me to write the prompt for an agent to carry this out (check the `local_path` SQL, build, recreate, compare logs and `writer status`).
+The entrypoint's default `SYNC_INTERVAL` is `900` seconds; Compose overrides that default to `600` seconds.
+
+Refresh is enabled only when:
+
+- `GBRAIN_MODE=managed`; and
+- the checkout has a remote named `origin`.
+
+If refresh fails or is refused, the entrypoint logs the failure and still runs sync. Get the detailed reason with:
+
+```sh
+gbrain sources refresh default --dry-run
+```
+
+The variable is ignored in classic mode and when the repository has no `origin` remote.
+
+## Is it safe to commit directly to the brain repository from another machine?
+
+It should not be the normal workflow in managed mode.
+
+A managed checkout is a **managed worktree**. Page changes should go through gbrain's persistence coordinator (`put_page`, `edit_page`, `remember`, MCP, and similar paths), so the database, files, and Git durability are updated in the intended order.
+
+A direct commit from another machine can produce several outcomes.
+
+### 1. The remote is simply ahead
+
+If the brain host has not written anything new, `sources refresh` can usually fast-forward the checkout to the other machine's commit. Sync then imports the change into the database.
+
+### 2. Both sides have commits — history diverges
+
+For example:
+
+1. Another machine pushes commit `A` to the remote.
+2. The brain host writes a page and creates local commit `B` before it sees `A`.
+3. The remote and local checkout no longer have a simple fast-forward relationship.
+
+Then:
+
+- the owner's push may be rejected;
+- `sources refresh` may be refused because the histories diverged or the checkout is busy;
+- the page may already exist in the local database/files while its Git backup or remote synchronization is still pending;
+- repeatedly failed effects may be parked and reported by `gbrain doctor` as `parked_effects`.
+
+This is a **Git durability** problem. Do not solve it by arbitrarily rebasing or resetting a checkout that gbrain manages.
+
+### 3. Both sides edit the same page
+
+If the file and database change in incompatible ways, gbrain may refuse the operation with an error such as `file_database_drift` instead of silently overwriting one side.
+
+If a remote commit has been detected but not imported, writes to that page may be refused with a state such as `pending_import`. Complete refresh/sync and read the exact `suggestion` in the error before retrying.
+
+## What is the safest workflow if another machine must push?
+
+Keep the period with two active writers as short as possible:
+
+1. **Prefer MCP/gbrain for writes**, rather than committing page files from another clone.
+2. If you only need to read or draft, use a read-only clone; do not push to the canonical branch.
+3. If committing from another machine is unavoidable:
+   - verify the branch and remote before editing;
+   - update that separate clone from the remote before starting;
+   - edit only files the brain host is not currently writing;
+   - make small commits and push promptly;
+   - pause automated writers on the brain host while coordinating the handoff;
+   - after the push, run on the brain host:
+
+     ```sh
+     gbrain sources refresh default --dry-run
+     gbrain sources refresh default
+     gbrain sync --source default --no-pull
+     ```
+
+   - verify:
+
+     ```sh
+     gbrain doctor --only sync_freshness
+     gbrain doctor --only parked_effects
+     gbrain sources writer status default --brain host --json
+     ```
+
+`git pull --rebase` on the **separate clone** is a preparation step for that clone. Do not run it in the managed checkout that gbrain uses as its canonical worktree.
+
+## What should I do if refresh is refused?
+
+Do not remove owner markers, edit the database, reset `HEAD`, or force-push. First collect the specific reason:
+
+```sh
+gbrain sources refresh default --dry-run
+gbrain sources writer status default --brain host --json
+gbrain doctor --only sync_freshness
+gbrain doctor --only parked_effects
+```
+
+Common causes include:
+
+- **Diverged history:** local and remote each contain commits the other lacks. Follow the error's recovery instructions; do not guess with `git pull --rebase` on the canonical checkout.
+- **Dirty checkout:** there are changes that the gbrain owner has not handled. Identify the process that made them before cleaning anything.
+- **Another sync/refresh is active:** wait for it to finish, then retry.
+- **Writer unavailable or refused:** inspect `writer status` and use the coordinator command named by the error.
+- **Git push failure or parked effects:** fix the named cause (credentials, remote, branch protection, and so on), then use gbrain's recovery suggestion. Do not force-push to hide the failure.
+
+If the situation is unclear, back up the database and the complete `brain/` directory before intervening. The database and Git checkout are separate data layers; one may contain a change even while the other is incomplete.
+
+## How do classic and managed differ?
+
+| Mode | Main behavior | Suitable for |
+| --- | --- | --- |
+| `classic` | The entrypoint runs an auto-commit watcher and `gbrain sync --repo /data/brain`. | A simple setup where the container is the only writer. |
+| `managed` | The auto-commit watcher is disabled; gbrain's owner/coordinator handles writes; sync uses `--no-pull`. | A brain with explicit ownership, coordinated persistence, and remote MCP clients. |
+
+In managed mode, `gbrain serve` must run with a source that has already been claimed and activated. Do not switch between modes while a writer is still active. Follow upstream's runbook to quiesce, deactivate/activate, and verify the state.
+
+## Does a Git remote automatically protect data when I push manually?
+
+Not completely.
+
+A push through gbrain's persistence path has its own durability and retry handling. A manual push from another clone does not pass through all of those safeguards; in particular, the owner's secret scan or other guards may not apply to a manual operation. Check secrets, the branch, and the content before pushing.
+
+Do not commit:
+
+- API keys, tokens, or credentials;
+- private SSH keys;
+- `.config`, runtime state, or sensitive data;
+- files unrelated to the brain that happen to be inside the checkout.
+
+## Upstream references
+
+- [Topologies — gbrain](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md): ownership, claim/activate, and managed persistence.
+- [Shared-checkout Git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md): why direct Git operations are unsafe on managed worktrees and how checkout/remote handling works.
+- [Write refusals](https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md): refusal codes, causes, and recovery suggestions.
+- [Troubleshooting](https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md): doctor commands and sync/effect diagnosis.
+
+The upstream `master` pages may describe a newer release than the image you are running. When they differ, use the error message, `gbrain --version`, and the documentation shipped for that exact version as the source of truth.
