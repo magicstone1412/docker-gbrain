@@ -42,6 +42,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Local notes
+docs/
+
 # Local assistant/tooling state
 .claude/
 .codex/
