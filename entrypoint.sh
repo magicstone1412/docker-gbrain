@@ -11,6 +11,31 @@ case "$GBRAIN_MODE" in
   *) echo "Invalid GBRAIN_MODE: $GBRAIN_MODE (expected classic|managed)" >&2; exit 2 ;;
 esac
 
+# Brain checkout path and source id. Defaults keep the current layout.
+#   BRAIN_DIR: absolute path of the brain checkout inside the container. It must
+#     equal the path the source was claimed with (sources.local_path). On a
+#     managed brain this script never rewrites that path (see section 6); to
+#     really move a managed root use the documented `gbrain sources set-path`
+#     flow, not this variable.
+#   GBRAIN_SOURCE_ID: gbrain source id used for managed sync and local_path.
+# Both values are interpolated into shell commands and one SQL statement, so
+# they are restricted to a safe character set.
+BRAIN_DIR="${BRAIN_DIR:-/data/brain}"
+BRAIN_DIR="${BRAIN_DIR%/}"
+GBRAIN_SOURCE_ID="${GBRAIN_SOURCE_ID:-default}"
+case "$BRAIN_DIR" in
+  "") echo "Invalid BRAIN_DIR: the root directory is not allowed" >&2; exit 2 ;;
+  /*) ;;
+  *) echo "Invalid BRAIN_DIR: $BRAIN_DIR (must be an absolute path)" >&2; exit 2 ;;
+esac
+case "$BRAIN_DIR" in
+  *[!A-Za-z0-9._/-]*) echo "Invalid BRAIN_DIR: only A-Za-z0-9._/- are allowed" >&2; exit 2 ;;
+  */..|*/../*|*/.|*/./*|*//*) echo "Invalid BRAIN_DIR: $BRAIN_DIR (no ., .. or // components)" >&2; exit 2 ;;
+esac
+case "$GBRAIN_SOURCE_ID" in
+  ""|*[!A-Za-z0-9._-]*) echo "Invalid GBRAIN_SOURCE_ID: $GBRAIN_SOURCE_ID (only A-Za-z0-9._- are allowed)" >&2; exit 2 ;;
+esac
+
 echo "gbrain build: $(tr '\n' ' ' < /app/.gbrain-build-info)"
 
 # ---------------------------------------------------------------------------
@@ -153,9 +178,29 @@ if [ -n "$EMBED_MAX_USD_PER_RUN" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Ensure /data/brain is a Git repo with git config
+# 5. Ensure $BRAIN_DIR (default /data/brain) is a Git repo with git config
 # ---------------------------------------------------------------------------
-echo "Configuring brain repo..."
+echo "Configuring brain repo ($BRAIN_DIR)..."
+
+# True when $1 is a mount point inside this container (reads /proc/self/mountinfo in plain sh, no awk
+# needed; BRAIN_DIR is restricted to a safe character set, so no unescaping).
+is_mountpoint() {
+  while read -r _ _ _ _ mp _; do
+    [ "$mp" = "$1" ] && return 0
+  done < /proc/self/mountinfo
+  return 1
+}
+
+mkdir -p "$BRAIN_DIR"
+if ! is_mountpoint "$BRAIN_DIR"; then
+  echo "  [warn] $BRAIN_DIR is not a mount point: the brain lives in the container filesystem and is lost when the container is recreated"
+fi
+if [ "$GBRAIN_MODE" = "managed" ]; then
+  BRAIN_PARENT=$(dirname "$BRAIN_DIR")
+  if ! is_mountpoint "$BRAIN_PARENT"; then
+    echo "  [warn] managed mode: $BRAIN_PARENT is not a mount point. The owner reservation (.gbrain-owner-*.json) is kept beside the root and would be lost on recreate (recovery_required)"
+  fi
+fi
 
 # Global git config — must run unconditionally on every container start,
 # not just on first init. Without this, git pull inside gbrain sync will
@@ -164,8 +209,8 @@ git config --global core.editor "true"
 git config --global pull.rebase false
 git config --global merge.conflictstyle diff3
 
-if [ ! -d /data/brain/.git ]; then
-  cd /data/brain
+if [ ! -d "$BRAIN_DIR/.git" ]; then
+  cd "$BRAIN_DIR"
   git init
   git config user.email "gbrain@local"
   git config user.name "GBrain"
@@ -173,8 +218,8 @@ if [ ! -d /data/brain/.git ]; then
   cd /app
 else
   # Ensure git config exists even after volume remount
-  git -C /data/brain config user.email "gbrain@local" || true
-  git -C /data/brain config user.name "GBrain" || true
+  git -C "$BRAIN_DIR" config user.email "gbrain@local" || true
+  git -C "$BRAIN_DIR" config user.name "GBrain" || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -200,19 +245,19 @@ if [ -d /root/.ssh ] && ls /root/.ssh/id_* >/dev/null 2>&1; then
   export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS"
 
   if [ -n "$BRAIN_REMOTE" ]; then
-    if git -C /data/brain remote get-url origin >/dev/null 2>&1; then
-      git -C /data/brain remote set-url origin "$BRAIN_REMOTE"
+    if git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
+      git -C "$BRAIN_DIR" remote set-url origin "$BRAIN_REMOTE"
     else
-      git -C /data/brain remote add origin "$BRAIN_REMOTE"
+      git -C "$BRAIN_DIR" remote add origin "$BRAIN_REMOTE"
     fi
     echo "  origin set to $BRAIN_REMOTE"
   fi
 
   # If a remote exists, make the current branch track it so pull/push work.
-  if git -C /data/brain remote get-url origin >/dev/null 2>&1; then
-    BRANCH=$(git -C /data/brain symbolic-ref --short HEAD 2>/dev/null || echo main)
-    if git -C /data/brain fetch origin "$BRANCH" 2>/dev/null; then
-      git -C /data/brain branch --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
+  if git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
+    BRANCH=$(git -C "$BRAIN_DIR" symbolic-ref --short HEAD 2>/dev/null || echo main)
+    if git -C "$BRAIN_DIR" fetch origin "$BRANCH" 2>/dev/null; then
+      git -C "$BRAIN_DIR" branch --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
       echo "  tracking origin/$BRANCH — SSH auth OK"
     else
       echo "  initial fetch failed (check key/permissions/URL) — sync will retry"
@@ -223,27 +268,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Point Postgres default source at the mounted brain volume
+# 6. Source path in Postgres
+#    classic: point the source at $BRAIN_DIR (idempotent: writes only when the
+#             stored value differs).
+#    managed: the claim recorded the path, so this script never rewrites it. It
+#             only verifies that BRAIN_DIR matches. A different path would mean
+#             running against the wrong checkout, and the owner reservation is
+#             named after sha256(root).
 # ---------------------------------------------------------------------------
-# Only write when the value differs: on a managed brain the claim already
-# recorded this path, so an unconditional UPDATE on every start is a needless
-# direct write to the sources table.
-psql "$DATABASE_URL" -c \
-  "UPDATE sources SET local_path = '/data/brain' WHERE id = 'default' AND local_path IS DISTINCT FROM '/data/brain';" \
-  2>/dev/null || true
+CURRENT_LOCAL_PATH=$(psql "$DATABASE_URL" -Atc \
+  "SELECT local_path FROM sources WHERE id = '$GBRAIN_SOURCE_ID';" 2>/dev/null || true)
+if [ "$GBRAIN_MODE" = "managed" ]; then
+  if [ -n "$CURRENT_LOCAL_PATH" ] && [ "$CURRENT_LOCAL_PATH" != "$BRAIN_DIR" ]; then
+    echo "[error] managed mode: BRAIN_DIR=$BRAIN_DIR but sources.local_path=$CURRENT_LOCAL_PATH for source '$GBRAIN_SOURCE_ID'." >&2
+    echo "        Refusing to start. Set BRAIN_DIR to the claimed path, or move the root with 'gbrain sources set-path'." >&2
+    exit 78
+  fi
+  if [ -z "$CURRENT_LOCAL_PATH" ]; then
+    echo "  [warn] managed mode: could not read sources.local_path for '$GBRAIN_SOURCE_ID'; path not verified"
+  else
+    echo "Managed mode: source '$GBRAIN_SOURCE_ID' path verified ($CURRENT_LOCAL_PATH)"
+  fi
+else
+  psql "$DATABASE_URL" -c \
+    "UPDATE sources SET local_path = '$BRAIN_DIR' WHERE id = '$GBRAIN_SOURCE_ID' AND local_path IS DISTINCT FROM '$BRAIN_DIR';" \
+    2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Runtime mode
 #    classic keeps the legacy auto-commit + repository sync behavior.
 #    managed leaves commits under managed persistence and uses coordinator sync.
 # ---------------------------------------------------------------------------
-echo "GBrain mode: $GBRAIN_MODE"
+echo "GBrain mode: $GBRAIN_MODE (brain: $BRAIN_DIR, source: $GBRAIN_SOURCE_ID)"
 
 if [ "$GBRAIN_MODE" = "classic" ]; then
   echo "Starting auto-commit watcher..."
   (while true; do
     sleep 30
-    cd /data/brain
+    cd "$BRAIN_DIR"
     if [ -n "$(git status --porcelain)" ]; then
       git add .
       git commit -m "auto: $(date '+%Y-%m-%d %H:%M:%S')" \
@@ -269,12 +332,12 @@ fi
 echo "Starting sync+embed loop (mode: $GBRAIN_MODE, interval: ${SYNC_INTERVAL}s, embed cap: ${EMBED_MAX_USD_PER_RUN:-none})..."
 (while true; do
   if [ "$GBRAIN_MODE" = "managed" ]; then
-    if gbrain sync --source default --no-pull; then
+    if gbrain sync --source "$GBRAIN_SOURCE_ID" --no-pull; then
       SYNC_OK=true
     else
       SYNC_OK=false
     fi
-  elif gbrain sync --repo /data/brain; then
+  elif gbrain sync --repo "$BRAIN_DIR"; then
     SYNC_OK=true
   else
     SYNC_OK=false
