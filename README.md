@@ -10,12 +10,13 @@ This repository contains the image build and the runtime entrypoint. The checked
 - `entrypoint.sh` — database initialization, embedding configuration, brain-repository setup, sync/embed jobs, optional autopilot, job worker, and the foreground MCP server.
 - `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:latest` image.
 - `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.341.0` currently).
-- `docs/` — deployment guide and multi-node Q&A, in English (`docs/en/`) and Vietnamese (`docs/vi/`).
+- `docs/` — deployment guide, multi-node Q&A, and glossary, in English (`docs/en/`) and Vietnamese (`docs/vi/`).
 
 ## Documentation
 
 - [Deployment guide (EN)](docs/en/deployment-guide.md) / [Deployment guide (VI)](docs/vi/deployment-guide.md) — build, run, embedding providers, runtime variables, classic vs managed modes, startup sequence, and security notes.
 - [Multi-node brain Q&A (EN)](docs/en/question-and-answer.md) / [Multi-node brain Q&A (VI)](docs/vi/question-and-answer.md) — what happens when the brain repo is committed from another machine, and how `GBRAIN_REFRESH_UPSTREAM` fits in.
+- [Glossary (EN)](docs/en/glossary.md) / [Glossary (VI)](docs/vi/glossary.md) — short definitions of the durability, writer status, managed vs classic, and admin-state terms used in the guide and Q&A.
 
 ## Requirements
 
