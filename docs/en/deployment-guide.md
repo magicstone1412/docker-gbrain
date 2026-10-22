@@ -33,7 +33,7 @@ Build from a specific tag:
 
 ```sh
 docker build \
-  --build-arg GBRAIN_TAG=v0.60.381.0 \
+  --build-arg GBRAIN_TAG=v0.60.382.0 \
   -t docker-gbrain .
 ```
 
