@@ -17,4 +17,5 @@
 | **`--admin-intent`** | Flag that names the admin action you intend to perform, so the command does not run the wrong one. |
 | **`sources refresh`** | Command that pulls new commits from `origin` into the checkout (fast-forward only), then syncs. The owner never pulls on its own. |
 | **`--no-pull`** | `sync` flag for the managed brain: only imports commits already present, never pulls from the remote. |
+| **Atom** | A small, self-contained unit of knowledge extracted from source content or written manually; typically expresses an idea, claim, quote, or reusable piece of information that can stand on its own. In a schema pack, `atom` is a page type and may have subtypes such as `extraction`, `manual`, or `lore`. |
 | **DB-only** | Data that exists only in the DB, with no files. Durability does not protect it; use `pg_dump`. |

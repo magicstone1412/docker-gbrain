@@ -17,4 +17,5 @@
 | **`--admin-intent`** | Cờ ghi rõ hành động quản trị bạn định làm, để lệnh không chạy nhầm. |
 | **`sources refresh`** | Lệnh kéo commit mới từ `origin` vào checkout (chỉ fast-forward), rồi sync. Owner không tự pull. |
 | **`--no-pull`** | Cờ của `sync` cho managed brain: chỉ nhập commit đã có, không kéo từ remote. |
+| **Atom** | Đơn vị tri thức nhỏ, tự chứa được trích xuất từ nội dung nguồn hoặc ghi thủ công; thường biểu đạt một ý, nhận định, trích dẫn hay mẩu thông tin có thể tái sử dụng độc lập. Trong schema pack, `atom` là một page type và có thể mang subtype như `extraction`, `manual` hoặc `lore`. |
 | **DB-only** | Dữ liệu chỉ nằm trong DB, không có file. Durability không bảo vệ được; cần `pg_dump`. |
