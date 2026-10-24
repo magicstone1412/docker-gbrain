@@ -408,26 +408,32 @@ done) &
 #    that are no-ops (or harmful) without a configured embedding provider.
 #
 #    `gbrain autopilot` is a self-maintaining daemon (lint, backlinks, sync,
-#    extract, embed, orphans) that runs a cycle every 300 s by default
-#    (`--interval <s>`). It spawns its own jobs worker child unless started with
-#    `--no-worker`, and dispatches each cycle through the Postgres job queue
-#    unless started with `--inline` (in-process).
+#    extract, embed, orphans). It wakes every 300 s by default (`--interval <s>`;
+#    adaptive: doubled when brain_score >= 90, halved (min 60 s) below 70).
+#    On Postgres it spawns its own jobs worker child and dispatches each tick
+#    through the job queue, unless started with `--no-worker` (no child) or
+#    `--inline` (in-process, no child); `minion_mode=off` also means no child.
 #
 #    `--install` is the persistent entry point (flag consent: persistent_install).
-#    This entrypoint pins `--target ephemeral-container` instead of relying on
-#    auto-detection: it writes ~/.gbrain/start-autopilot.sh (on the ./.config
-#    volume), an executable that self-backgrounds with `nohup`, and this
-#    entrypoint executes it directly on every container start. `--no-inject`
-#    stops --install from editing any agent bootstrap files.
+#    The target is auto-detected (independent of GBRAIN_MODE): inside Docker
+#    (/.dockerenv, RENDER, RAILWAY_ENVIRONMENT, FLY_APP_NAME) gbrain picks
+#    `ephemeral-container`. That target writes ~/.gbrain/start-autopilot.sh (on
+#    the ./.config volume), an executable that self-backgrounds with `nohup`,
+#    and this entrypoint executes it directly on every container start.
+#    `--no-inject` stops --install from editing any agent bootstrap files.
 #
 #    Operate it from OUTSIDE the container; never start a second daemon by hand:
 #      docker exec gbrain gbrain autopilot --status --json
 #      docker exec gbrain gbrain autopilot pause --reason "<why>"
 #      docker exec gbrain gbrain autopilot resume
 #      docker exec gbrain gbrain autopilot --retry-global [--phase <name>]
-#    `pause` only holds the autopilot cycles. The sync+embed loop in section 8
-#    keeps running. Changing AUTOPILOT_ENABLED or the API keys needs a container
-#    restart (a running ephemeral daemon keeps its old environment).
+#    `pause` writes ~/.gbrain/autopilot-operator-paused: the daemon skips cycles
+#    and job workers stop claiming jobs (an in-flight job finishes). The marker
+#    lives on the ./.config volume and `--install` and `gbrain upgrade` keep it,
+#    so it SURVIVES container restarts until `resume`. The sync+embed loop in
+#    section 8 (plain CLI processes) is not held by it.
+#    Changing AUTOPILOT_ENABLED or the API keys needs a container restart (a
+#    running ephemeral daemon keeps its old environment).
 #
 #    The daemon wrapper inherits process environment, then sources shell
 #    profiles, then ~/.gbrain/env last. Mirroring keys into that file gives
@@ -461,12 +467,15 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     # it survived in the container filesystem; a recreated container would have
     # no script and autopilot would silently not run.
     #
-    # --target ephemeral-container: this image has no launchd/systemd/cron, so
-    #   pin the start-script target rather than depend on detection.
+    # The install target is auto-detected (no --target). Inside Docker gbrain
+    #   picks ephemeral-container via /.dockerenv. On a runtime without that
+    #   marker it could pick systemd or crontab instead; then no start script
+    #   is written and the "not found after --install" warning below fires.
+    #   If that happens, add `--target ephemeral-container` here.
     # --no-inject: never edit agent bootstrap files (--inject-bootstrap is
     #   otherwise automatic when OpenClaw is detected).
-    echo "Installing/reloading autopilot (target: ephemeral-container)..."
-    gbrain autopilot --install --yes --target ephemeral-container --no-inject --brain host \
+    echo "Installing/reloading autopilot (target auto-detected)..."
+    gbrain autopilot --install --yes --no-inject --brain host \
       || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
 
     # Mirror live container env into the daemon-owned env file (0600),
@@ -506,11 +515,13 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
       echo "  Check 'gbrain autopilot --status' and container logs for the real cause."
     fi
 
-    # Read-only sanity check of the daemon. `--status` exits 1 when brain-wide
-    # maintenance is stalled, so it must never stop startup, and `timeout` keeps
-    # a hung call from delaying `gbrain serve`. An operator hold (`autopilot
-    # pause`) is deliberately NOT lifted here: if the status shows the daemon is
-    # paused, run `docker exec gbrain gbrain autopilot resume` when done.
+    # Read-only sanity check of the daemon (`--status` only reads the lock,
+    # markers and log). It exits 1 when the daemon is stale, has not run yet
+    # (normal for the first seconds), is paused, or brain-wide maintenance is
+    # stalled, and 2 when it self-disabled (repo gone), so it must never stop
+    # startup; `timeout` keeps a hung call from delaying `gbrain serve`. An
+    # operator pause is deliberately NOT lifted here: if the status shows the
+    # daemon is paused, run `docker exec gbrain gbrain autopilot resume`.
     if [ "$AUTOPILOT_WORKER_OWNED" = "true" ]; then
       sleep 5
       echo "Autopilot status:"
@@ -528,9 +539,11 @@ fi
 # 10. Start a standalone worker only when autopilot did not take ownership.
 #     This keeps async jobs processing when autopilot is disabled or skipped,
 #     while avoiding an uncoordinated second worker when autopilot is running.
-#     `gbrain autopilot` spawns its own jobs worker child by default (`--no-worker`
-#     turns that off). If the generated start script ever passes --no-worker, set
+#     `gbrain autopilot` spawns its own jobs worker child by default on Postgres
+#     (`--no-worker`, `--inline` and minion_mode=off turn that off). The wrapper
+#     that --install generates passes none of them. If that ever changes, set
 #     AUTOPILOT_WORKER_OWNED=false so this block starts the standalone worker.
+#     Note the flag means "start script was launched", not "daemon is healthy".
 # ---------------------------------------------------------------------------
 if [ "$AUTOPILOT_WORKER_OWNED" = "false" ]; then
   echo "Starting job worker..."

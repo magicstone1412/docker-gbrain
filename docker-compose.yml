@@ -62,9 +62,9 @@ services:
       # Maximum USD per non-interactive background embedding run.
       EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN-1}
       # --- Autopilot daemon ---
-      # Default: on. The entrypoint runs `gbrain autopilot --install --target
-      # ephemeral-container`, which writes ~/.gbrain/start-autopilot.sh (kept on the
-      # ./.config volume), and starts it on every container start. The daemon owns
+      # Default: on. The entrypoint runs `gbrain autopilot --install` (target is
+      # auto-detected; inside Docker it writes ~/.gbrain/start-autopilot.sh, kept on
+      # the ./.config volume) and starts it on every container start. The daemon owns
       # the jobs worker, so no standalone `gbrain jobs work` is started. Set to
       # false to disable it (the entrypoint then starts a standalone worker).
       # Needs VOYAGE_API_KEY or OPENAI_API_KEY; its chat phases (chronicle/dream/
