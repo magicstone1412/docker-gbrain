@@ -62,7 +62,17 @@ services:
       # Maximum USD per non-interactive background embedding run.
       EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN-1}
       # --- Autopilot daemon ---
-      # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
+      # Default: on. The entrypoint runs `gbrain autopilot --install --target
+      # ephemeral-container`, which writes ~/.gbrain/start-autopilot.sh (kept on the
+      # ./.config volume), and starts it on every container start. The daemon owns
+      # the jobs worker, so no standalone `gbrain jobs work` is started. Set to
+      # false to disable it (the entrypoint then starts a standalone worker).
+      # Needs VOYAGE_API_KEY or OPENAI_API_KEY; its chat phases (chronicle/dream/
+      # enrich) also need OPENAI_API_KEY or ANTHROPIC_API_KEY.
+      # Operate it from the host and never start a second daemon by hand:
+      #   docker exec gbrain gbrain autopilot --status --json
+      #   docker exec gbrain gbrain autopilot pause --reason "<why>"   (then: resume)
+      # Changing this value needs `docker compose up -d` to recreate the container.
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-true}
       # Optional: URL that the Hermes host actually calls (OAuth issuer).
       # GBRAIN_PUBLIC_URL: ${GBRAIN_PUBLIC_URL:-}
