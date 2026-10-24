@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.3 AS builder
+FROM oven/bun:1.4.4 AS builder
 WORKDIR /app
 
 ARG GBRAIN_TAG=latest
@@ -27,7 +27,7 @@ RUN set -eu; \
 RUN bun install --frozen-lockfile --registry https://registry.npmjs.org
 RUN bun run build
 
-FROM oven/bun:1.4.3
+FROM oven/bun:1.4.4
 WORKDIR /app
 
 ARG GBRAIN_TAG=latest
