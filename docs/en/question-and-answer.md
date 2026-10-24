@@ -1,6 +1,6 @@
-# Q&A: syncing a brain from multiple machines
+# Q&A: syncing and restoring a brain from Git
 
-This guide covers the case where `/data/brain` is stored in Git and another machine clones that repository, edits it, and pushes to a remote such as GitHub.
+This guide covers the case where `/data/brain` is stored in Git and another machine clones that repository, edits it, and pushes to a remote such as GitHub. The last question covers how to restore the brain after a failure when only the repository on GitHub remains.
 
 > **Scope:** The examples focus on `GBRAIN_MODE=managed`, which is the mode used by this repository's Compose deployment. Commands and refusal details can change between gbrain releases; when troubleshooting, follow the error and recovery suggestion from the version you are running.
 
@@ -191,6 +191,57 @@ Do not commit:
 - private SSH keys;
 - `.config`, runtime state, or sensitive data;
 - files unrelated to the brain that happen to be inside the checkout.
+
+## If the brain fails and only the GitHub repository remains, how do I restore gbrain to its original state?
+
+According to the upstream documentation on rebuilding a brain from a Git repository (`system-of-record.md`, "Disaster recovery" section), the short answer is: **content that lives in files is recoverable; content that exists only in the database is not.** The steps below should be rehearsed in advance (see section 5).
+
+### 1. What is recoverable from GitHub, and what is lost
+
+Upstream declares the repository to be the system of record: the database is a derived cache, and `gbrain sync && gbrain extract all` rebuilds everything from the markdown. Read the limits of that claim carefully. A newer version of the same document states explicitly that the rebuild convention only applies to knowledge that actually lives in canonical files; DB-only pages, facts not yet written into fences, audit history, and site-specific credentials cannot be recovered from markdown. The README likewise notes that DB-only pages, unresolved facts, revision history, and operational state require a separate database backup. Your earlier `gbrain backup status` run warned about exactly this.
+
+| Recoverable from Git | Lost (not in Git) |
+|---|---|
+| `.md` pages, frontmatter, tags | DB-only pages (written via `database_only`) |
+| Links, timelines, takes, facts inside fences in files | Facts not yet written into fences, `page_versions` history |
+| Chunks and embeddings (rebuilt, **costs embed spend**) | `oauth_clients`, `access_tokens` (Hermes must be re-issued) |
+| `RESOLVER.md`, `schema.md`, `gbrain.yml` if committed | `.config` settings, custom schema packs, audit logs |
+| | `raw_data`, job queues, `dream_verdicts` (the last one can be rebuilt with `dream retriage --force`) |
+| | Owner state: reservation, stamp, `admin_state`, `git_durability` |
+| | `trust claim-sources` classifications; pages under `db_only`/gitignored paths |
+
+Also, **only what was actually pushed is recoverable.** Untracked files: if the machine is lost before durability is enabled, they are gone. Check regularly: `git -C ~/docker/gbrain/brain status` and `git -C ~/docker/gbrain/brain log origin/master..HEAD` must be empty.
+
+### 2. What you need outside of Git
+
+- The compose file, `entrypoint.sh`, and Dockerfile. `~/docker/gbrain` is **not a Git repository**, so it is lost with the machine. Put these files in a separate repository (no secrets) together with a `.env.example`.
+- API keys (Voyage, OpenAI), the SSH key with access to the `brain` repository, and the Postgres password. They can be re-issued, but you need somewhere to keep them (a password manager).
+- The image: `skywirex/gbrain` on Docker Hub, or the Dockerfile to rebuild it. Record the tag and digest.
+- `~/gbrain-backup/` currently sits on the same VM; it does not help if the machine is lost.
+
+### 3. Recovery procedure (fresh environment, only GitHub left)
+
+1. Rebuild the wrapper directory: compose, `.env` (new keys), and **empty** `./.config` and `./state`.
+2. Clone the repository: `git clone git@github.com:magicstone1412/brain.git brain`. Check `git -C brain ls-files | grep -i gbrain-owner` to make sure no old stamp files were committed.
+3. **Start with `GBRAIN_MODE=classic`.** A brain freshly cloned from Git is not yet claimed, so managed mode is not usable yet. The entrypoint will run `gbrain init` on first start (creates the schema), set `local_path`, and the sync loop will import all pages.
+4. If you want to be proactive: inside the container run `gbrain sync --repo /data/brain`, then `gbrain extract all` (rebuild links, timelines, facts, takes), then `gbrain embed --stale` (preview with `--dry-run` first because it costs money).
+5. Verify: compare `gbrain stats` against the baseline numbers you saved (821 pages, 3843 chunks, 755 links, 148 tags, 118 timeline; the page count may differ slightly because the old DB still had soft-deleted pages), then `gbrain doctor`.
+
+### 4. What to redo after the data is back
+
+1. Re-issue credentials for Hermes (new token or OAuth client) and update its configuration.
+2. `gbrain trust claim-sources` (reclassify "your notes").
+3. Restore hand-tuned configuration keys (`backup.remote_timeout_ms`...); custom schema packs must be recreated.
+4. **Claim + activate again** following `gbrain-managed-migration-plan.md` (phases 2 through 4, skipping the old backup parts), then enable `git-durability` immediately. This time it is easier because the brain is new and clean.
+5. Clean up test data and verify that `ls-remote` matches HEAD.
+
+A variant: if you lost only the database but still have `./brain`, `./state`, and `./.config`, do not reuse a checkout that already carries a stamp and reservation, because they reference a brain id that no longer exists in the database. I have not verified how gbrain handles that. The safest option is a fresh clone from GitHub as above.
+
+### 5. Prepare in advance so recovery actually works
+
+1. **Verify GitHub is always up to date:** enable durability, run `gbrain backup check`, and periodically compare `git rev-parse HEAD` against `git ls-remote origin master`.
+2. **`pg_dump` regularly to another machine** (object storage or another machine, encrypted). The DB-only items in the table above can only be saved this way.
+3. **Rehearse recovery** in a separate compose project: different project name, its own Postgres and `./brain`, no published port 7333, no `BRAIN_REMOTE`, `AUTOPILOT_ENABLED=false`, no embed key (the entrypoint will run `--no-embedding`, costing nothing). Important: set `git remote set-url --push origin no_push` in the rehearsal checkout so it can never push to the real GitHub. Compare `gbrain stats` after `sync` and `extract all` against the baseline. Do this once a quarter.
 
 ## Upstream references
 

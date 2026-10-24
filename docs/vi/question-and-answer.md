@@ -1,6 +1,6 @@
-# Q&A: đồng bộ brain từ nhiều máy
+# Q&A: đồng bộ và phục hồi brain từ Git
 
-Tài liệu này trả lời trường hợp `/data/brain` được lưu trong Git và có một máy khác clone repository đó để chỉnh sửa rồi push lên remote (ví dụ GitHub).
+Tài liệu này trả lời trường hợp `/data/brain` được lưu trong Git và có một máy khác clone repository đó để chỉnh sửa rồi push lên remote (ví dụ GitHub). Câu hỏi cuối trả lời cách phục hồi brain khi sự cố xảy ra và chỉ còn repository trên GitHub.
 
 > **Phạm vi:** Nội dung tập trung vào `GBRAIN_MODE=managed`, là chế độ Compose sử dụng. Các lệnh và hành vi có thể thay đổi theo phiên bản gbrain; khi xử lý sự cố, ưu tiên thông báo lỗi và tài liệu của đúng phiên bản đang chạy.
 
@@ -191,6 +191,57 @@ Không commit các file sau vào repository:
 - SSH private key;
 - `.config`, runtime state hoặc dữ liệu nhạy cảm;
 - các file không thuộc brain nhưng vô tình nằm trong checkout.
+
+## Câu hỏi: Giả sử brain có sự cố và chỉ còn repo trên GitHub, phục hồi gbrain trở lại ban đầu như thế nào?
+
+Theo tài liệu upstream về việc dựng lại brain từ repo Git (`system-of-record.md`, mục "Disaster recovery"), trả lời ngắn: **phục hồi được phần nội dung nằm trong file, không phục hồi được phần chỉ nằm trong DB.** Các bước dưới đây nên được diễn tập trước (xem mục 5).
+
+### 1. Cái gì phục hồi được từ GitHub, cái gì mất
+
+Upstream tuyên bố repo là hệ thống ghi nhận gốc: DB chỉ là cache dẫn xuất; `gbrain sync && gbrain extract all` dựng lại toàn bộ từ markdown. Cần đọc kỹ giới hạn của tuyên bố đó. Phiên bản mới hơn của chính tài liệu này nói rõ: quy ước dựng lại chỉ áp dụng cho tri thức thực sự nằm trong file chuẩn; trang chỉ có trong DB, fact chưa ghi vào fence, lịch sử kiểm toán và credential riêng của site không thể phục hồi từ markdown. README cũng ghi trang chỉ trong DB, fact chưa giải quyết, lịch sử revision và trạng thái vận hành cần backup DB riêng. Lệnh `gbrain backup status` của bạn trước đó cũng cảnh báo đúng như vậy.
+
+| Phục hồi từ Git | Mất (không có trong Git) |
+|---|---|
+| Trang `.md`, frontmatter, tag | Trang chỉ trong DB (ghi bằng `database_only`) |
+| Link, timeline, takes, facts nằm trong fence trong file | Fact chưa ghi vào fence, lịch sử `page_versions` |
+| Chunk và embedding (dựng lại, **tốn tiền embed**) | `oauth_clients`, `access_tokens` (Hermes phải cấp lại) |
+| `RESOLVER.md`, `schema.md`, `gbrain.yml` nếu đã commit | Cấu hình `.config`, pack schema tùy chỉnh, nhật ký audit |
+| | `raw_data`, hàng đợi job, `dream_verdicts` (cái cuối dựng lại được bằng `dream retriage --force`) |
+| | Trạng thái owner: reservation, stamp, `admin_state`, `git_durability` |
+| | Phân loại `trust claim-sources`; trang trong đường dẫn `db_only`/gitignore |
+
+Ngoài ra, **chỉ phục hồi được những gì thực sự đã được push.** Các file untracked: nếu mất máy lúc chưa bật durability, chúng sẽ mất. Kiểm tra thường xuyên: `git -C ~/docker/gbrain/brain status` và `git -C ~/docker/gbrain/brain log origin/master..HEAD` phải rỗng.
+
+### 2. Thứ phải có ngoài Git
+
+- File compose, `entrypoint.sh`, Dockerfile. `~/docker/gbrain` **không phải repo Git** nên mất cùng máy. Hãy đưa các file này vào một repo riêng (không có bí mật) cùng `.env.example`.
+- API key (Voyage, OpenAI), khóa SSH có quyền truy cập repo `brain`, mật khẩu Postgres. Cấp lại được, nhưng phải có chỗ lưu (trình quản lý mật khẩu).
+- Image: `skywirex/gbrain` trên Docker Hub, hoặc Dockerfile để build lại. Ghi lại tag và digest.
+- `~/gbrain-backup/` hiện nằm cùng VM; không giúp được nếu máy mất.
+
+### 3. Quy trình phục hồi (môi trường mới, chỉ còn GitHub)
+
+1. Dựng lại thư mục wrapper: compose, `.env` (key mới), `./.config` và `./state` **rỗng**.
+2. Clone repo: `git clone git@github.com:magicstone1412/brain.git brain`. Kiểm tra `git -C brain ls-files | grep -i gbrain-owner` để chắc không có file stamp cũ lẫn vào.
+3. **Khởi động ở `GBRAIN_MODE=classic`.** Brain mới từ Git chưa được claim, nên managed chưa dùng được. Entrypoint sẽ chạy `gbrain init` lần đầu (tạo schema), đặt `local_path`, và vòng sync sẽ nhập toàn bộ trang.
+4. Nếu muốn chủ động: trong container chạy `gbrain sync --repo /data/brain`, rồi `gbrain extract all` (dựng lại link, timeline, facts, takes), rồi `gbrain embed --stale` (xem trước bằng `--dry-run` vì tốn tiền).
+5. Kiểm tra: `gbrain stats` so với số liệu baseline bạn đã lưu (821 pages, 3843 chunks, 755 links, 148 tags, 118 timeline; số trang có thể lệch nhẹ vì DB cũ còn trang xóa mềm), rồi `gbrain doctor`.
+
+### 4. Việc phải làm lại sau khi dữ liệu về
+
+1. Cấp lại thông tin xác thực cho Hermes (token hoặc OAuth client mới) và cập nhật cấu hình của nó.
+2. `gbrain trust claim-sources` (lại phân loại "your notes").
+3. Đặt lại các khóa cấu hình đã chỉnh tay (`backup.remote_timeout_ms`...); pack schema tùy chỉnh phải tạo lại.
+4. **Claim + activate lại** theo `gbrain-managed-migration-plan.md` (Giai đoạn 2 đến 4, bỏ phần backup cũ), rồi bật `git-durability` ngay lập tức. Lần này dễ hơn vì brain mới, sạch.
+5. Dọn dữ liệu thử, kiểm tra `ls-remote` khớp HEAD.
+
+Một biến thể khác: nếu chỉ mất DB nhưng còn `./brain`, `./state`, `./.config`, đừng dùng lại checkout đã có stamp và reservation, vì chúng tham chiếu một brain id không còn trong DB. Tôi chưa xác minh cách gbrain xử lý. An toàn nhất là clone mới từ GitHub như trên.
+
+### 5. Chuẩn bị trước để phục hồi thật sự chạy được
+
+1. **Kiểm tra GitHub luôn đủ mới:** bật durability, chạy `gbrain backup check`, và định kỳ so `git rev-parse HEAD` với `git ls-remote origin master`.
+2. **`pg_dump` định kỳ sang nơi khác máy** (object storage hoặc máy khác, mã hóa). Phần DB-only trong bảng trên chỉ cứu được bằng cách này.
+3. **Diễn tập phục hồi** trong project compose tách biệt: tên project khác, Postgres và `./brain` riêng, không publish cổng 7333, không đặt `BRAIN_REMOTE`, `AUTOPILOT_ENABLED=false`, không có key embed (entrypoint sẽ chạy `--no-embedding`, không tốn tiền). Quan trọng: đặt `git remote set-url --push origin no_push` trong checkout diễn tập để tuyệt đối không push nhầm lên GitHub thật. So `gbrain stats` sau `sync` và `extract all` với baseline. Làm mỗi quý một lần.
 
 ## Tài liệu upstream nên đọc khi xử lý sự cố
 
