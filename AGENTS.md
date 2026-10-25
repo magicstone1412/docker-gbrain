@@ -7,7 +7,7 @@ This repository is a Docker wrapper around upstream [`garrytan/gbrain`](https://
 ## Files and current state
 
 - `Dockerfile` builds gbrain from an upstream tag and installs the runtime dependencies.
-- `GBRAIN_VERSION` is the CI pin (`v0.60.448.0` currently).
+- `GBRAIN_VERSION` is the CI pin (`v0.60.451.0` currently).
 - `entrypoint.sh` is the image's real entrypoint.
 - `docker-compose.yml` is a managed-mode deployment template: it references the published image `skywirex/gbrain:latest` (the tag must include the current entrypoint with `GBRAIN_MODE` support), starts its own healthy `pgvector/pgvector:pg16` database, and bind-mounts local state, brain, gbrain config, and SSH keys.
 - `README.md` is the user-facing source of truth for runtime variables and deployment caveats.
