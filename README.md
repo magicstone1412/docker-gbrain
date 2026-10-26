@@ -9,7 +9,7 @@ This repository contains the image build and the runtime entrypoint. The checked
 - `Dockerfile` — multi-stage Bun image build. By default it resolves the newest upstream `v*` tag; CI passes the pinned value from `GBRAIN_VERSION`.
 - `entrypoint.sh` — database initialization, embedding configuration, brain-repository setup, sync/embed jobs, optional autopilot, job worker, and the foreground MCP server.
 - `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:latest` image.
-- `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.451.0` currently).
+- `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.461.0` currently).
 - `docs/` — deployment guide, multi-node Q&A, and glossary, in English (`docs/en/`) and Vietnamese (`docs/vi/`).
 
 ## Documentation
@@ -37,7 +37,7 @@ docker build -t docker-gbrain .
 Build a specific upstream tag:
 
 ```sh
-docker build --build-arg GBRAIN_TAG=v0.60.451.0 -t docker-gbrain .
+docker build --build-arg GBRAIN_TAG=v0.60.461.0 -t docker-gbrain .
 ```
 
 For reproducible CI builds, change `GBRAIN_VERSION`. The GitHub Actions workflow builds and publishes `linux/amd64` and `linux/arm64` images to GHCR and Docker Hub.
