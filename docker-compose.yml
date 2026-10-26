@@ -39,11 +39,12 @@ services:
       # Changing this back to classic requires `gbrain sources writer deactivate`
       # first; classic sync is refused on an activated managed brain.
       GBRAIN_MODE: managed
-      # Managed brains never pull by themselves. Set to true to run
-      # `gbrain sources refresh` before every sync cycle so commits pushed to
-      # origin from another machine reach this checkout (fast-forward only).
-      # While a refresh drains writes, a page write can be refused for a moment.
-      GBRAIN_REFRESH_UPSTREAM: ${GBRAIN_REFRESH_UPSTREAM:-false}
+      # Managed brains never pull by themselves. This defaults to true so a
+      # `gbrain sources refresh` runs before every sync cycle and commits pushed
+      # to origin from another machine reach this checkout (fast-forward only).
+      # Set to false to disable. While a refresh drains writes, a page write can
+      # be refused for a moment.
+      GBRAIN_REFRESH_UPSTREAM: ${GBRAIN_REFRESH_UPSTREAM:-true}
       # Optional overrides (defaults: /data/brain and default). Leave them
       # unset unless you are building a NEW brain with another layout: on a
       # managed brain BRAIN_DIR must equal the claimed path, otherwise the

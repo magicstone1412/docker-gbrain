@@ -120,6 +120,7 @@ The checked-in `docker-compose.yml` is a runnable managed-mode deployment templa
 - waits for the PostgreSQL health check before starting gbrain;
 - enables `GBRAIN_MODE=managed` and autopilot by default;
 - uses `SYNC_INTERVAL=600` seconds by default;
+- defaults `GBRAIN_REFRESH_UPSTREAM` to `true`, so a `gbrain sources refresh` fast-forwards the checkout to `origin` before each sync cycle (set it to `false` to disable);
 - bind-mounts `./state` at `/data`, `./brain` at `/data/brain`, `./.config` at `/root/.gbrain`, and `${HOME}/.ssh` read-only at `/root/.ssh`;
 - exposes port `7333` on all host interfaces; restrict it with a firewall or bind it to a private interface.
 

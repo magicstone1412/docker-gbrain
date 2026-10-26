@@ -53,7 +53,7 @@ git status --short
 - Private brain remotes use host SSH keys mounted read-only at `/root/.ssh`. `GIT_SSH_COMMAND` must use writable `/tmp/known_hosts`, never `/root/.ssh/known_hosts`.
 - `BRAIN_REMOTE` configures `origin` and branch tracking when SSH keys are available.
 - The Compose file publishes port 7333 on all host interfaces. Treat the MCP endpoint as network-accessible and restrict it at the firewall/private network in real deployments.
-- Compose defaults to `GBRAIN_MODE=managed`, `SYNC_INTERVAL=600`, and `AUTOPILOT_ENABLED=true`; do not confuse these deployment defaults with the `entrypoint.sh` defaults (`classic`, 900, and false).
+- Compose defaults to `GBRAIN_MODE=managed`, `SYNC_INTERVAL=600`, `AUTOPILOT_ENABLED=true`, and `GBRAIN_REFRESH_UPSTREAM=true`; do not confuse these deployment defaults with the `entrypoint.sh` defaults (`classic`, 900, and false).
 
 ## Change guidance
 
