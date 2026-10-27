@@ -455,6 +455,34 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     START_SCRIPT="$GBRAIN_DIR/start-autopilot.sh"
     mkdir -p "$GBRAIN_DIR"
 
+    # Clear a stale autopilot PID lock left by the previous container run.
+    # ~/.gbrain is a bind mount, so autopilot.lock and autopilot.pid survive a
+    # restart, but PIDs do not: the new container has a fresh PID namespace and
+    # starts its processes with similar numbers. The daemon then finds "its"
+    # old pid alive (an unrelated gbrain sync/embed process that received the
+    # same number) and refuses to start with "lock ... is held by pid N - a live
+    # gbrain autopilot process", leaving no daemon and no jobs worker, which
+    # doctor reports as wedged_queue. At this point of a container boot nothing
+    # started by this script can be an autopilot yet, so any lock found is stale.
+    # Run `gbrain autopilot --status --json` afterwards to confirm it is healthy.
+    if [ -e "$GBRAIN_DIR/autopilot.lock" ] || [ -e "$GBRAIN_DIR/autopilot.pid" ]; then
+      STALE_PID=$(cat "$GBRAIN_DIR/autopilot.lock" 2>/dev/null || true)
+      echo "Clearing stale autopilot lock/pid from a previous container run (lock pid: ${STALE_PID:-unknown})"
+      rm -rf "$GBRAIN_DIR/autopilot.lock" "$GBRAIN_DIR/autopilot.pid"
+    fi
+
+    # Keep the previous run's autopilot log. The start script truncates it on
+    # every boot, which already hid why an earlier daemon stopped heartbeating
+    # (and the only line left was the lock refusal of the following boot).
+    # Timestamped copies, newest 5 kept.
+    if [ -s "$GBRAIN_DIR/autopilot.log" ]; then
+      cp "$GBRAIN_DIR/autopilot.log" "$GBRAIN_DIR/autopilot.log.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+      # shellcheck disable=SC2012
+      ls -1t "$GBRAIN_DIR"/autopilot.log.2* 2>/dev/null | tail -n +6 | while read -r old_log; do
+        rm -f "$old_log"
+      done
+    fi
+
     # Regenerate the wrapper and env template on every container start.
     # On ephemeral targets this does not reload a running daemon: it keeps its
     # old environment until the container restarts or it is killed and relaunched.
@@ -565,10 +593,10 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$GBRAIN_MODE" = "managed" ]; then
   WRITER_STATUS=$(gbrain sources writer status "$GBRAIN_SOURCE_ID" --brain host --json 2>/dev/null || true)
-  if printf '%s' "$WRITER_STATUS" | grep -Eq '"git_durability"[[:space:]]*:[[:space:]]*"on"'; then
+  if printf '%s' "$WRITER_STATUS" | grep -Eq '"git_durability"[[:space:]]*:[[:space:]]*"(on|enabled)"'; then
     echo "Git durability: on (the owner commits and pushes page writes)"
   else
-    echo "  [warn] managed mode: git_durability is not 'on' for source '$GBRAIN_SOURCE_ID' (or the status could not be read)."
+    echo "  [warn] managed mode: git_durability is not on/enabled for source '$GBRAIN_SOURCE_ID' (or the status could not be read)."
     echo "         Page writes are saved as files but may stay UNCOMMITTED. Operator action: gbrain sources writer git-durability $GBRAIN_SOURCE_ID --enable --dry-run"
   fi
 fi
