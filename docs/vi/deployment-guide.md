@@ -170,7 +170,7 @@ Claim nhưng chưa activate là trạng thái lửng: các đường sync cũ đ
 - yêu cầu source đã được claim và activate trước đó;
 - coi `gbrain serve` là owner chính của brain.
 
-Trong managed mode, entrypoint chỉ đọc trạng thái `git_durability` và cảnh báo nếu trạng thái không phải `on`. Entrypoint không tự thay đổi quyền ownership hoặc durability. Nếu cần bật durability, operator phải thực hiện theo CLI của gbrain, sau khi kiểm tra dry-run.
+Trong managed mode, entrypoint chỉ đọc trạng thái `git_durability` và cảnh báo nếu trạng thái không phải `on`/`enabled`. Entrypoint không tự thay đổi quyền ownership hoặc durability. Nếu cần bật durability, operator phải thực hiện theo CLI của gbrain, sau khi kiểm tra dry-run.
 
 Không chuyển một managed brain về `classic` nếu chưa deactivate writer trước. Ngược lại, không dùng managed mode cho source chưa được claim/activate.
 

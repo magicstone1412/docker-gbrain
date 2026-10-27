@@ -170,7 +170,7 @@ This is the Compose default mode:
 - requires the source to have been claimed and activated beforehand;
 - treats `gbrain serve` as the primary owner of the brain.
 
-In managed mode, the entrypoint only reads the `git_durability` state and warns if the state is not `on`. The entrypoint never changes ownership or durability itself. If you need to enable durability, the operator must do it via the gbrain CLI, after checking a dry-run.
+In managed mode, the entrypoint only reads the `git_durability` state and warns if the state is not `on` or `enabled`. The entrypoint never changes ownership or durability itself. If you need to enable durability, the operator must do it via the gbrain CLI, after checking a dry-run.
 
 Do not switch a managed brain back to `classic` without deactivating the writer first. Conversely, do not use managed mode for a source that has not been claimed/activated.
 
