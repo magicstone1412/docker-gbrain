@@ -33,7 +33,7 @@ Build từ một tag cụ thể:
 
 ```sh
 docker build \
-  --build-arg GBRAIN_TAG=v0.60.503.0 \
+  --build-arg GBRAIN_TAG=v0.60.512.0 \
   -t docker-gbrain .
 ```
 
