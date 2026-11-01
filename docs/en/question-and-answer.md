@@ -68,6 +68,28 @@ gbrain repair file-drift --source default --all-drifted --prefer file --apply --
 gbrain doctor
 ```
 
+**When several pages have drifted, work through them one page at a time, starting with a preview.** For example, to fix drift in two files, RESOLVER.md and log.md, do the following:
+
+**`resolver`:**
+
+```bash
+gbrain repair file-drift --source default --slug resolver --prefer file
+```
+
+**`log`:**
+
+```bash
+gbrain repair file-drift --source default --slug log --prefer file
+```
+
+Each command only prints a preview and its own hash. Read the list and the `exceptions` section carefully, then apply with the exact hash printed by **that preview command**:
+
+```bash
+gbrain repair file-drift --source default --slug resolver --prefer file --apply --expect <hash from the resolver preview>
+```
+
+The two pages have different hashes, so finish one page before running the preview for the other.
+
 **Q5. What should I check in the preview before applying it?**
 
 - `file-drift: 1 item(s) to repair` and `e.g. default:resolver`: the list contains only the page you edited. Because `--all-drifted` applies to every drifted page, stop if you see an unexpected page.

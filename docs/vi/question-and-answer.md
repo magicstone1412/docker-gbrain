@@ -68,6 +68,28 @@ gbrain repair file-drift --source default --all-drifted --prefer file --apply --
 gbrain doctor
 ```
 
+**Nhiều page bị drift thì làm từng page, bắt đầu bằng preview.** Ví dụ muốn sửa drift của 2 file RESOLVER.md và log.md thì thực hiện như sau:
+
+**`resolver`:**
+
+```bash
+gbrain repair file-drift --source default --slug resolver --prefer file
+```
+
+**`log`:**
+
+```bash
+gbrain repair file-drift --source default --slug log --prefer file
+```
+
+Mỗi lệnh chỉ in preview và một hash riêng. Đọc kỹ danh sách và phần `exceptions`, rồi áp dụng bằng đúng hash do **lệnh preview đó** in ra:
+
+```bash
+gbrain repair file-drift --source default --slug resolver --prefer file --apply --expect <hash của resolver>
+```
+
+Hash của hai page khác nhau, nên làm xong page này rồi mới chạy preview page kia.
+
 **Q5. Cần kiểm tra gì ở bước preview trước khi apply?**
 
 - `file-drift: 1 item(s) to repair` và `e.g. default:resolver`: danh sách chỉ có page bạn sửa. Vì `--all-drifted` áp dụng cho mọi page lệch, nếu thấy page lạ thì dừng lại.
