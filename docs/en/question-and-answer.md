@@ -28,6 +28,73 @@ This guide covers the case where `/data/brain` is stored in Git and another mach
 - **Do not run `git pull`, `git pull --rebase`, `git reset`, or manually edit page files in the managed checkout.** A managed worktree has its own owner/coordinator; direct Git writes may be refused or may leave the database and checkout out of sync.
 - The safest way to change content from another machine is to use that machine as an **MCP client** and write through gbrain, rather than treating the brain host and the other machine as equal Git writers.
 
+# FAQ: I edited `RESOLVER.md` directly. How do I update gbrain managed?
+
+**Q1. Why do I need an extra step after editing the file?**
+
+In `GBRAIN_MODE: managed`, every page write goes through gbrain so the database and file stay in sync. When you edit a file directly in `/data/brain`, the file differs from the database. gbrain calls this condition **drift**. A drifted page refuses coordinated writes (`source_changed`), and maintenance skips that page until you choose which side is authoritative.
+
+**Q2. How do I know whether a page has drifted?**
+
+Run `gbrain doctor`. Drift is present if you see this line:
+
+```text
+[WARN] maintenance_write_drift: 1 page(s) have a canonical file that differs from the database ...
+```
+
+**Q3. How do I identify exactly which page is different?**
+
+```bash
+gbrain sources reconcile default --brain host --audit --conflicts
+```
+
+Only pay attention to slugs with `still_present.reason: "file_database_drift"` (`resolver` is the slug for `RESOLVER.md`). Slugs with `agrees` are old conflicts that are now reconciled, while `page_missing` means the page has been deleted. These two types need no action.
+
+**Q4. I edited the file and want the database to follow the file. Which command should I use?**
+
+Use `--prefer file`. Follow these steps:
+
+```bash
+# 1. Back up the file (very quick and recommended)
+cp /data/brain/RESOLVER.md /tmp/RESOLVER.bak.md
+
+# 2. Preview; nothing is written yet
+gbrain repair file-drift --source default --all-drifted --prefer file
+
+# 3. Apply, using the exact hash printed by step 2
+gbrain repair file-drift --source default --all-drifted --prefer file --apply --expect <hash>
+
+# 4. Check again
+gbrain doctor
+```
+
+**Q5. What should I check in the preview before applying it?**
+
+- `file-drift: 1 item(s) to repair` and `e.g. default:resolver`: the list contains only the page you edited. Because `--all-drifted` applies to every drifted page, stop if you see an unexpected page.
+- `prefer_file: ... (exactly the preferred side)` and `import the file into the page`: gbrain will import the file content into the database.
+- A line such as `unknown: ... page_missing` refers to pages that have been deleted. The command does not touch them, so you can ignore it.
+- The `cost` line: normally one page needs to be embedded again, at nearly zero cost.
+
+**Q6. What stays unchanged, and what changes?**
+
+According to the preview message, protected metadata remains from the database, tags are merged from both sides, protected takes and private fact rows are preserved. Your file is not changed because the command only imports the file into the database.
+
+**Q7. What if I want the database to overwrite the file instead?**
+
+Use `--prefer database` instead of `--prefer file`, following the same preview-then-apply process. Be careful because the file will be overwritten; back it up first.
+
+**Q8. Is something broken if apply reports `STOPPED: writer_lock_unavailable`?**
+
+No. This is behavior also seen with `repair stale-atoms`: a one-off CLI command can lose write access partway through, while progress is saved. Run the same command again and it will continue. With only one file-drift page, it usually finishes immediately. Do not delete the `.lock` file or kill the `serve` process yourself.
+
+**Q9. Does autopilot affect this?**
+
+If you ran `gbrain autopilot pause`, remember to run `gbrain autopilot resume` when finished. The pause state survives `gbrain upgrade` and `--install`, so autopilot will not start running again automatically if you forget.
+
+**Q10. How can I avoid drift in the future?**
+
+The most reliable approach is to edit pages through gbrain tools instead of editing files directly.
+
 ## Does the brain host notice when another machine pushes?
 
 Not by itself when the brain host is in managed mode.

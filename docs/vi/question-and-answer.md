@@ -28,6 +28,73 @@ Tài liệu này trả lời trường hợp `/data/brain` được lưu trong G
 - **Không dùng `git pull`, `git pull --rebase`, `git reset` hoặc sửa trực tiếp các file page trong managed checkout.** Managed worktree có owner/coordinator riêng; ghi Git trực tiếp có thể bị từ chối hoặc làm database và checkout lệch nhau.
 - Cách an toàn nhất để thay đổi nội dung từ máy khác là dùng máy đó làm **MCP client** và ghi qua gbrain, thay vì coi brain host và máy kia là hai Git writer ngang hàng.
 
+# Hỏi đáp: Tôi sửa `RESOLVER.md` trực tiếp, làm sao cập nhật vào gbrain managed?
+
+**Q1. Tại sao sửa file xong lại cần làm thêm bước nào đó?**
+
+Ở chế độ `GBRAIN_MODE: managed`, mọi lần ghi vào page đều đi qua gbrain để database và file luôn khớp nhau. Khi bạn sửa thẳng file trong `/data/brain`, file khác database. gbrain gọi tình trạng này là **drift**. Page bị drift sẽ từ chối mọi lần ghi có điều phối (`source_changed`) và maintenance bỏ qua page đó, cho tới khi bạn chọn bản nào là đúng.
+
+**Q2. Làm sao biết page đang bị drift?**
+
+Chạy `gbrain doctor`. Nếu có dòng này là có drift:
+
+```text
+[WARN] maintenance_write_drift: 1 page(s) have a canonical file that differs from the database ...
+```
+
+**Q3. Làm sao biết chính xác page nào bị lệch?**
+
+```bash
+gbrain sources reconcile default --brain host --audit --conflicts
+```
+
+Chỉ quan tâm slug có `still_present.reason: "file_database_drift"` (với resolver là slug `resolver`, file `RESOLVER.md`). Các slug có `agrees` là xung đột cũ đã khớp lại, còn `page_missing` là page đã bị xóa. Hai loại này không cần xử lý.
+
+**Q4. Tôi sửa file và muốn database theo file. Lệnh nào?**
+
+Dùng `--prefer file`. Làm theo thứ tự:
+
+```bash
+# 1. Sao lưu file (rất nhanh, nên làm)
+cp /data/brain/RESOLVER.md /tmp/RESOLVER.bak.md
+
+# 2. Preview, chưa ghi gì
+gbrain repair file-drift --source default --all-drifted --prefer file
+
+# 3. Apply, dùng đúng hash mà bước 2 in ra
+gbrain repair file-drift --source default --all-drifted --prefer file --apply --expect <hash>
+
+# 4. Kiểm tra lại
+gbrain doctor
+```
+
+**Q5. Cần kiểm tra gì ở bước preview trước khi apply?**
+
+- `file-drift: 1 item(s) to repair` và `e.g. default:resolver`: danh sách chỉ có page bạn sửa. Vì `--all-drifted` áp dụng cho mọi page lệch, nếu thấy page lạ thì dừng lại.
+- `prefer_file: ... (exactly the preferred side)` và `import the file into the page`: gbrain sẽ nhập nội dung file vào database.
+- Dòng `unknown: ... page_missing` là các page đã bị xóa. Lệnh không đụng tới chúng, bỏ qua được.
+- Dòng `cost`: thường 1 page cần embed lại, chi phí gần như bằng 0.
+
+**Q6. Có gì được giữ nguyên, có gì bị đổi?**
+
+Theo thông báo của preview: metadata được bảo vệ vẫn giữ theo database, tags là hợp của cả hai bên, còn takes được bảo vệ và private fact rows được giữ. File của bạn không bị thay đổi, vì lệnh chỉ import file vào database.
+
+**Q7. Tôi muốn ngược lại, lấy database ghi đè file thì sao?**
+
+Dùng `--prefer database` thay cho `--prefer file`, cùng quy trình preview rồi apply. Cẩn thận vì file sẽ bị ghi đè, hãy sao lưu trước.
+
+**Q8. Lệnh apply báo `STOPPED: writer_lock_unavailable`. Có hỏng không?**
+
+Không hỏng. Đó là hành vi đã thấy với `repair stale-atoms`: lệnh chạy một lần từ CLI mất quyền ghi giữa chừng, nhưng tiến độ được lưu. Chạy lại đúng lệnh là nó tiếp tục. Với file-drift chỉ 1 page nên thường xong ngay. Lúc đó đừng xóa file `.lock` và đừng tự kill tiến trình `serve`.
+
+**Q9. Autopilot có ảnh hưởng không?**
+
+Nếu bạn đã chạy `gbrain autopilot pause`, nhớ chạy `gbrain autopilot resume` khi xong. Bản pause được giữ qua `gbrain upgrade` và `--install`, nên quên là autopilot không tự chạy lại.
+
+**Q10. Làm sao tránh drift về sau?**
+
+Cách chắc chắn nhất là sửa page qua công cụ của gbrain thay vì sửa file trực tiếp.
+
 ## Câu hỏi: Tôi push một commit từ máy khác. Brain host có tự nhận biết không?
 
 Không, nếu brain host đang ở managed mode.
