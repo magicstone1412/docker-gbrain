@@ -35,7 +35,12 @@ services:
     container_name: gbrain
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://gbrain:gbrain123@gbrain-postgres:5432/gbrain
+      # sslmode=disable: Postgres runs in the same private Docker network
+      # (gbrain-net) without TLS. Newer gbrain requires TLS for non-local hosts
+      # by default, so TLS is explicitly turned off for this trusted network.
+      # If Postgres is on another machine/untrusted network, enable TLS on the
+      # server and use sslmode=require (or verify-full) instead.
+      DATABASE_URL: postgresql://gbrain:gbrain123@gbrain-postgres:5432/gbrain?sslmode=disable
       # Changing this back to classic requires `gbrain sources writer deactivate`
       # first; classic sync is refused on an activated managed brain.
       GBRAIN_MODE: managed
