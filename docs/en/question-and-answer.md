@@ -4,6 +4,10 @@ This guide covers the case where `/data/brain` is stored in Git and another mach
 
 > **Scope:** The examples focus on `GBRAIN_MODE=managed`, which is the mode used by this repository's Compose deployment. Commands and refusal details can change between gbrain releases; when troubleshooting, follow the error and recovery suggestion from the version you are running.
 
+## Where do I start?
+
+Start with the upstream recommended brain schema: [GBRAIN_RECOMMENDED_SCHEMA.md](https://github.com/garrytan/gbrain/blob/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md). It describes the files and page conventions a brain repository should follow, so use it as the template when setting up `/data/brain` for the first time.
+
 ## Short answer
 
 - A commit pushed from another machine does **not automatically appear** in the brain host's checkout in managed mode.

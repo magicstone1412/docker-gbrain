@@ -4,6 +4,10 @@ Tài liệu này trả lời trường hợp `/data/brain` được lưu trong G
 
 > **Phạm vi:** Nội dung tập trung vào `GBRAIN_MODE=managed`, là chế độ Compose sử dụng. Các lệnh và hành vi có thể thay đổi theo phiên bản gbrain; khi xử lý sự cố, ưu tiên thông báo lỗi và tài liệu của đúng phiên bản đang chạy.
 
+## Bắt đầu từ đâu?
+
+Bắt đầu từ schema brain được khuyến nghị của upstream: [GBRAIN_RECOMMENDED_SCHEMA.md](https://github.com/garrytan/gbrain/blob/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md). Tài liệu mô tả các file và quy ước trang mà một brain repository nên tuân theo; hãy dùng nó làm khuôn khi khởi tạo `/data/brain` lần đầu.
+
 ## Tóm tắt ngắn
 
 - Một commit được push từ máy khác **không tự động xuất hiện** trong checkout của brain host ở managed mode.
