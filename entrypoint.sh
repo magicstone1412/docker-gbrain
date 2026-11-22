@@ -651,8 +651,32 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     # --no-inject: never edit agent bootstrap files (--inject-bootstrap is
     #   otherwise automatic when OpenClaw is detected).
     echo "Installing/reloading autopilot (target auto-detected)..."
-    gbrain autopilot --install --yes --no-inject --brain host \
+    INSTALL_LOG=$(mktemp)
+    gbrain autopilot --install --yes --no-inject --brain host > "$INSTALL_LOG" 2>&1 \
       || echo "  [warn] gbrain autopilot --install exited non-zero, continuing"
+    cat "$INSTALL_LOG"
+
+    # Newer gbrain writes a per-brain script (start-autopilot-<hash>.sh) and
+    # prints its path ("Start script: <path>"). Use the path gbrain reports;
+    # fall back to the newest start-autopilot*.sh, then the legacy fixed name.
+    REPORTED_SCRIPT=$(sed -n 's/^[[:space:]]*Start script:[[:space:]]*//p' "$INSTALL_LOG" | tail -n 1)
+    if [ -n "$REPORTED_SCRIPT" ] && [ -f "$REPORTED_SCRIPT" ]; then
+      START_SCRIPT="$REPORTED_SCRIPT"
+    else
+      NEWEST_SCRIPT=$(ls -t "$GBRAIN_DIR"/start-autopilot*.sh 2>/dev/null | head -n 1 || true)
+      [ -n "$NEWEST_SCRIPT" ] && START_SCRIPT="$NEWEST_SCRIPT"
+    fi
+    rm -f "$INSTALL_LOG"
+
+    # A start script written by an earlier root run (before GBRAIN_HOME was
+    # introduced) hardcodes /root/.gbrain/..., which does not exist now. Never
+    # run it; move it aside so a fresh --install output is used instead.
+    if [ -n "$START_SCRIPT" ] && [ -f "$START_SCRIPT" ] \
+       && [ "$GBRAIN_DIR" != "/root/.gbrain" ] && grep -q '/root/\.gbrain' "$START_SCRIPT"; then
+      echo "  [warn] $START_SCRIPT references /root/.gbrain (left over from an earlier root run); not running it."
+      mv "$START_SCRIPT" "$START_SCRIPT.stale-root" 2>/dev/null || true
+      START_SCRIPT=""
+    fi
 
     # Mirror live container env into the daemon-owned env file (0600),
     # preserving any lines --install already wrote that we don't manage.
@@ -676,18 +700,27 @@ if [ "${AUTOPILOT_ENABLED:-false}" = "true" ]; then
     # `nohup ... &`. Execute it directly (not `. sourced`) so bash — not
     # this sh/dash entrypoint — runs it, and don't double-background: the
     # script returns almost immediately after its internal nohup call.
-    if [ -x "$START_SCRIPT" ]; then
+    # A failing start script must not abort the entrypoint (set -e would end
+    # the container and loop it forever): warn and let the standalone worker
+    # in section 10 take over instead.
+    if [ -n "$START_SCRIPT" ] && [ -x "$START_SCRIPT" ]; then
       echo "Starting autopilot via $START_SCRIPT ..."
-      "$START_SCRIPT"
-      echo "Autopilot started (pid $(cat "$GBRAIN_DIR/autopilot.pid" 2>/dev/null || echo '?'))."
-      AUTOPILOT_WORKER_OWNED=true
-    elif [ -f "$START_SCRIPT" ]; then
+      if "$START_SCRIPT"; then
+        echo "Autopilot started (pid $(cat "$GBRAIN_DIR/autopilot.pid" 2>/dev/null || echo '?'))."
+        AUTOPILOT_WORKER_OWNED=true
+      else
+        echo "  [warn] $START_SCRIPT failed (exit $?) — autopilot NOT running; falling back to a standalone worker."
+      fi
+    elif [ -n "$START_SCRIPT" ] && [ -f "$START_SCRIPT" ]; then
       echo "Starting autopilot via $START_SCRIPT (via sh, not marked executable) ..."
-      sh "$START_SCRIPT"
-      echo "Autopilot started."
-      AUTOPILOT_WORKER_OWNED=true
+      if sh "$START_SCRIPT"; then
+        echo "Autopilot started."
+        AUTOPILOT_WORKER_OWNED=true
+      else
+        echo "  [warn] $START_SCRIPT failed — autopilot NOT running; falling back to a standalone worker."
+      fi
     else
-      echo "  [warn] $START_SCRIPT not found after --install — autopilot NOT running."
+      echo "  [warn] no usable start-autopilot*.sh found in $GBRAIN_DIR after --install — autopilot NOT running."
       echo "  Check 'gbrain autopilot --status' and container logs for the real cause."
     fi
 
