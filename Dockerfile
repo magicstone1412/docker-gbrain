@@ -34,11 +34,23 @@ ARG GBRAIN_TAG=latest
 LABEL org.opencontainers.image.source="https://github.com/garrytan/gbrain" \
       org.gbrain.requested-tag="${GBRAIN_TAG}"
 
-RUN apt-get update && apt-get install -y git openssh-client netcat-openbsd postgresql-client jq && rm -rf /var/lib/apt/lists/*
+# util-linux provides setpriv, used by the entrypoint to drop privileges (PUID/PGID).
+RUN apt-get update && apt-get install -y git openssh-client netcat-openbsd postgresql-client jq util-linux && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app /app
+# Root OR non-root: no USER instruction on purpose. The entrypoint runs as
+# whatever the container is started as (root by default; PUID/PGID drops
+# privileges; `user:` in compose also works).
+# oven/bun already ships uid 1000 (user "bun"); only create one if it is absent.
+# GBRAIN_HOME is a neutral, persistent home shared by every mode (config in
+# $GBRAIN_HOME/.gbrain, ssh keys in $GBRAIN_HOME/.ssh). It is pre-owned by uid
+# 1000 so `user: "1000:1000"` works without any chown.
+ENV GBRAIN_HOME=/home/gbrain
 RUN ln -s /app/bin/gbrain /usr/local/bin/gbrain \
-    && mkdir -p /data/brain
+    && chmod -R a+rX /app \
+    && (getent passwd 1000 >/dev/null || useradd -u 1000 -U -M -d /home/gbrain -s /bin/sh gbrain) \
+    && mkdir -p /data/brain /home/gbrain/.gbrain \
+    && chown 1000:1000 /data /data/brain /home/gbrain /home/gbrain/.gbrain
 
 COPY entrypoint.sh /entrypoint.sh
 # Strip CRLF line endings (a CRLF shebang makes the container fail to start

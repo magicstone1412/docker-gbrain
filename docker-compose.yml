@@ -84,8 +84,21 @@ services:
       # GBRAIN_PUBLIC_URL: ${GBRAIN_PUBLIC_URL:-}
       # SSH remote URL — set as origin and tracked by the current branch.
       BRAIN_REMOTE: ${BRAIN_REMOTE:-}
-      # Use a writable known_hosts because the ~/.ssh mount below is read-only.
-      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"
+      # --- Run as root OR non-root ---
+      # PUID/PGID unset (or 0): run as root, exactly like before.
+      # PUID/PGID set: the entrypoint starts as root, chowns ./brain, ./state
+      # and ./.config to that uid:gid, then drops privileges. Set them to the
+      # owner of the host files, ideally your own user (put PUID=$(id -u) and
+      # PGID=$(id -g) in .env) so the mounted SSH key is readable too.
+      # (Alternative without any chown: `user: "1000:1000"` on this service,
+      # with the host dirs already owned by that uid.)
+      PUID: ${PUID:-0}
+      PGID: ${PGID:-0}
+      # Home and config location, identical for root and non-root (set in the
+      # Dockerfile too). The mounts below must target this path.
+      GBRAIN_HOME: /home/gbrain
+      # SSH is configured by the entrypoint (keys are copied to a private 0600
+      # temp dir, so GIT_SSH_COMMAND no longer has to be set here).
     ports:
       # Reachable from the separate Hermes host over the network. Since this
       # is no longer loopback/internal-bridge-only, restrict at the firewall
@@ -97,8 +110,8 @@ services:
     volumes:
       - ./state:/data
       - ./brain:/data/brain
-      - ./.config:/root/.gbrain
-      - ${HOME}/.ssh:/root/.ssh:ro
+      - ./.config:/home/gbrain/.gbrain
+      - ${HOME}/.ssh:/home/gbrain/.ssh:ro
     depends_on:
       gbrain-postgres:
         condition: service_healthy

@@ -47,6 +47,118 @@ case "$GBRAIN_REFRESH_UPSTREAM" in
   *) echo "Invalid GBRAIN_REFRESH_UPSTREAM: $GBRAIN_REFRESH_UPSTREAM (expected true|false)" >&2; exit 2 ;;
 esac
 
+# ---------------------------------------------------------------------------
+# 0. Run as root OR as a non-root user
+#    Three supported ways to start the container:
+#      a) root (default, legacy): nothing changes, HOME=/root.
+#      b) root + PUID/PGID: fix ownership of the data dirs, then drop privileges
+#         (setpriv/gosu) and re-run this script as that user. Easiest for bind
+#         mounts: set PUID/PGID to the host owner of ./brain and ./.config.
+#      c) non-root from the start (`user: "1000:1000"` / Dockerfile USER): no
+#         chown is possible, so the mounted dirs must already be writable by
+#         that uid. A clear error is printed if they are not.
+#    GBRAIN_HOME (recommended: /home/gbrain) keeps the config dir at the same
+#    path for every mode, so one compose volume works for root and non-root.
+# ---------------------------------------------------------------------------
+CUR_UID=$(id -u)
+CUR_GID=$(id -g)
+
+# One home for every mode: when GBRAIN_HOME is set, HOME follows it, so
+# ~/.gbrain, ~/.gitconfig and ~/.ssh resolve to the same persistent location
+# whether we run as root or not (and whatever gbrain itself reads).
+if [ -n "${GBRAIN_HOME:-}" ]; then
+  HOME="$GBRAIN_HOME"
+  export HOME
+fi
+
+is_uint() { case "$1" in ""|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+# Exit with an actionable message when a directory is not writable.
+require_writable() {
+  [ -w "$1" ] && return 0
+  echo "[error] $1 is not writable by uid $(id -u):$(id -g)." >&2
+  echo "        Fix the host dir ownership (chown -R $(id -u):$(id -g) <host dir>)," >&2
+  echo "        or start the container as root with PUID/PGID so it can chown for you." >&2
+  exit 77
+}
+
+# chown $1 only when its owner differs (avoids a slow -R on every restart).
+# $2 = recursive|shallow. Never fatal: read-only / squashed mounts only warn.
+fix_owner() {
+  [ -e "$1" ] || return 0
+  [ "$(stat -c %u:%g "$1" 2>/dev/null)" = "$PUID:$PGID" ] && return 0
+  if [ "$2" = "recursive" ]; then
+    chown -R "$PUID:$PGID" "$1" 2>/dev/null || echo "  [warn] could not chown -R $1 to $PUID:$PGID"
+  else
+    chown "$PUID:$PGID" "$1" 2>/dev/null || echo "  [warn] could not chown $1 to $PUID:$PGID"
+  fi
+}
+
+if [ "$CUR_UID" = "0" ]; then
+  PUID="${PUID:-0}"
+  PGID="${PGID:-$PUID}"
+  if ! is_uint "$PUID" || ! is_uint "$PGID"; then
+    echo "Invalid PUID/PGID: $PUID/$PGID (expected numeric ids)" >&2
+    exit 2
+  fi
+  if [ "$PUID" != "0" ]; then
+    TARGET_HOME="${GBRAIN_HOME:-}"
+    if [ -z "$TARGET_HOME" ]; then
+      TARGET_HOME=$(getent passwd "$PUID" 2>/dev/null | cut -d: -f6 || true)
+      TARGET_HOME="${TARGET_HOME:-/home/gbrain}"
+    fi
+    TARGET_CFG="$TARGET_HOME/.gbrain"
+    echo "Running as root: preparing dirs for uid:gid $PUID:$PGID, then dropping privileges..."
+    mkdir -p "$TARGET_HOME" "$TARGET_CFG" "$BRAIN_DIR"
+    fix_owner "$TARGET_HOME" shallow
+    fix_owner "$TARGET_CFG" recursive
+    fix_owner "$BRAIN_DIR" recursive
+    # managed mode keeps .gbrain-owner-*.json beside the brain root
+    fix_owner "$(dirname "$BRAIN_DIR")" shallow
+    if command -v setpriv >/dev/null 2>&1; then
+      exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups \
+        env HOME="$TARGET_HOME" /bin/sh "$0" "$@"
+    elif command -v gosu >/dev/null 2>&1; then
+      exec gosu "$PUID:$PGID" env HOME="$TARGET_HOME" /bin/sh "$0" "$@"
+    else
+      echo "[error] PUID=$PUID requested but neither setpriv nor gosu is installed in the image." >&2
+      exit 1
+    fi
+  fi
+  echo "Running as root (uid 0)."
+else
+  # Non-root. HOME may be unset, "/" or unwritable (arbitrary --user uid).
+  if [ -z "${HOME:-}" ] || [ "$HOME" = "/" ] || [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then
+    for cand in "${GBRAIN_HOME:-}" /home/gbrain /tmp/gbrain-home; do
+      [ -n "$cand" ] || continue
+      if mkdir -p "$cand" 2>/dev/null && [ -w "$cand" ]; then
+        HOME="$cand"
+        break
+      fi
+    done
+    export HOME
+    if [ "$HOME" = "/tmp/gbrain-home" ]; then
+      echo "  [warn] no writable persistent HOME found; using $HOME (config/git settings are lost on recreate). Mount a writable dir and set GBRAIN_HOME."
+    fi
+  fi
+  # ssh and git call getpwuid(); an arbitrary uid without a passwd entry breaks
+  # ssh ("No user exists for uid"). Add one when /etc/passwd is writable
+  # (chmod g=w /etc/passwd in the image), otherwise just warn.
+  if ! getent passwd "$CUR_UID" >/dev/null 2>&1; then
+    if [ -w /etc/passwd ]; then
+      echo "gbrain:x:${CUR_UID}:${CUR_GID}:gbrain:${HOME}:/bin/sh" >> /etc/passwd
+    else
+      echo "  [warn] uid $CUR_UID has no /etc/passwd entry: SSH to a private brain repo will fail. Use the image's uid (default 1000) or PUID/PGID."
+    fi
+  fi
+  echo "Running as non-root uid:gid $CUR_UID:$CUR_GID (HOME=$HOME)"
+fi
+
+# Preflight: fail early and clearly instead of in the middle of gbrain init.
+GBRAIN_CFG_DIR="${GBRAIN_HOME:-$HOME}/.gbrain"
+mkdir -p "$GBRAIN_CFG_DIR" 2>/dev/null || true
+require_writable "$GBRAIN_CFG_DIR"
+
 echo "gbrain build: $(tr '\n' ' ' < /app/.gbrain-build-info)"
 
 # ---------------------------------------------------------------------------
@@ -202,7 +314,8 @@ is_mountpoint() {
   return 1
 }
 
-mkdir -p "$BRAIN_DIR"
+mkdir -p "$BRAIN_DIR" 2>/dev/null || true
+require_writable "$BRAIN_DIR"
 if ! is_mountpoint "$BRAIN_DIR"; then
   echo "  [warn] $BRAIN_DIR is not a mount point: the brain lives in the container filesystem and is lost when the container is recreated"
 fi
@@ -219,6 +332,11 @@ fi
 git config --global core.editor "true"
 git config --global pull.rebase false
 git config --global merge.conflictstyle diff3
+# A bind-mounted brain repo is often owned by a different uid than the one the
+# container runs as; without this git refuses it ("dubious ownership").
+if ! git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$BRAIN_DIR"; then
+  git config --global --add safe.directory "$BRAIN_DIR"
+fi
 
 if [ ! -d "$BRAIN_DIR/.git" ]; then
   cd "$BRAIN_DIR"
@@ -235,25 +353,55 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5b. SSH auth for a PRIVATE brain repo
-#     The container can't share the host's ssh-agent, so we mount the host's
-#     SSH keys read-only at /root/.ssh and authenticate over SSH.
-#       - Seed a WRITABLE known_hosts (the mount is :ro, so we can't write
-#         into /root/.ssh) and pin github.com's host key.
+#     The container can't share the host's ssh-agent, so mount the host's SSH
+#     keys read-only. Looked up in this order:
+#       $SSH_MOUNT_DIR, $HOME/.ssh, /root/.ssh (legacy root mount)
+#     ssh refuses keys that are not owned by the calling user or that are
+#     group/world readable, and a :ro bind mount keeps the host's owner and
+#     mode. So the keys are COPIED into a private 0700 temp dir with 0600 mode
+#     and passed explicitly with -i. This works the same for root and non-root.
 #       - BRAIN_REMOTE (optional): SSH remote URL, e.g.
 #         git@github.com:you/brain.git — set/updated so `gbrain sync` can
-#         pull & push. If the volume already has a remote, this is a no-op
-#         unless BRAIN_REMOTE differs.
+#         pull & push.
+#     If the key is unreadable by the container uid (host mode 600 owned by a
+#     different uid), run with PUID/PGID equal to the host uid, or make the key
+#     group-readable for the container's gid.
 # ---------------------------------------------------------------------------
-if [ -d /root/.ssh ] && ls /root/.ssh/id_* >/dev/null 2>&1; then
-  echo "Host SSH keys detected — configuring SSH for git..."
-  KNOWN_HOSTS=/tmp/known_hosts
+SSH_SRC=""
+for d in "${SSH_MOUNT_DIR:-}" "$HOME/.ssh" /root/.ssh; do
+  [ -n "$d" ] || continue
+  if ls "$d"/id_* >/dev/null 2>&1; then
+    SSH_SRC="$d"
+    break
+  fi
+done
+
+SSH_ID_ARGS=""
+if [ -n "$SSH_SRC" ]; then
+  SSH_RT=$(mktemp -d)
+  for k in "$SSH_SRC"/id_*; do
+    [ -f "$k" ] || continue
+    case "$k" in *.pub) continue ;; esac
+    kn=$(basename "$k")
+    if cp "$k" "$SSH_RT/$kn" 2>/dev/null; then
+      chmod 600 "$SSH_RT/$kn"
+      SSH_ID_ARGS="$SSH_ID_ARGS -i $SSH_RT/$kn"
+    else
+      echo "  [warn] cannot read $k as uid $(id -u) (check key owner/mode vs PUID/PGID)"
+    fi
+  done
+fi
+
+if [ -n "$SSH_ID_ARGS" ]; then
+  echo "Host SSH keys detected in $SSH_SRC — configuring SSH for git..."
+  KNOWN_HOSTS="$SSH_RT/known_hosts"
   # Pin github.com (and ssh.github.com) so the first pull doesn't fail on
   # host-key verification. accept-new in GIT_SSH_COMMAND covers other hosts.
   ssh-keyscan -t rsa,ecdsa,ed25519 github.com ssh.github.com > "$KNOWN_HOSTS" 2>/dev/null \
     && echo "  known_hosts seeded for github.com" \
     || echo "  ssh-keyscan failed — relying on accept-new"
 
-  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS"
+  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS -o IdentitiesOnly=yes$SSH_ID_ARGS"
 
   if [ -n "$BRAIN_REMOTE" ]; then
     if git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
@@ -275,7 +423,7 @@ if [ -d /root/.ssh ] && ls /root/.ssh/id_* >/dev/null 2>&1; then
     fi
   fi
 else
-  echo "No SSH keys at /root/.ssh — brain repo treated as local-only."
+  echo "No usable SSH keys (looked in \$SSH_MOUNT_DIR, $HOME/.ssh, /root/.ssh) — brain repo treated as local-only."
 fi
 
 # ---------------------------------------------------------------------------
