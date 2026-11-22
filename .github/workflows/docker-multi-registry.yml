@@ -75,4 +75,5 @@ jobs:
           build-args: |
             GIT_COMMIT=${{ github.sha }}
             GBRAIN_TAG=${{ steps.gbrain_version.outputs.value }}
-          no-cache: true
+          cache-from: type=gha,scope=gbrain
+          cache-to: type=gha,mode=max,scope=gbrain
