@@ -117,6 +117,13 @@ if [ "$CUR_UID" = "0" ]; then
     TARGET_CFG="$TARGET_HOME/.gbrain"
     echo "Running as root: preparing dirs for uid:gid $PUID:$PGID, then dropping privileges..."
     mkdir -p "$TARGET_HOME" "$TARGET_CFG" "$BRAIN_DIR"
+    # A writer lock path recorded while the container ran as root lives under
+    # /root/.gbrain/persistence/locks and is never relocated by gbrain (it
+    # always wins over any env). Compose can mount that same host dir there
+    # (see docker-compose.yml); a non-root writer must be able to TRAVERSE
+    # /root (mode 0700 by default) to reach it. x for others lets it reach the
+    # mount without allowing it to list /root.
+    chmod o+x /root 2>/dev/null || true
     # SSH runtime dir (section 5b) may belong to a previous PUID; recreate it.
     rm -rf "${SSH_RUNTIME_DIR:-/home/gbrain/.ssh-runtime}"
     fix_owner "$TARGET_HOME" shallow
