@@ -15,7 +15,7 @@ This repository contains the image build and the runtime entrypoint. The checked
 ## Documentation
 
 - [Deployment guide (EN)](docs/en/deployment-guide.md) / [Deployment guide (VI)](docs/vi/deployment-guide.md) — build, run, embedding providers, runtime variables, classic vs managed modes, startup sequence, and security notes.
-- [Brain operations note: sync & recovery (EN)](docs/en/operation-note.md) / [Ghi chú vận hành brain: đồng bộ & phục hồi (VI)](docs/vi/operation-note.md) — operating procedures for commits from another machine, `GBRAIN_REFRESH_UPSTREAM`, and restoring a brain from its Git repository after a failure.
+- [Operations notes (EN)](docs/en/index.md) / [Ghi chú vận hành (VI)](docs/vi/index.md) — operating procedures for commits from another machine, `GBRAIN_REFRESH_UPSTREAM`, recreated brain roots after host moves, and restoring a brain from its Git repository after a failure.
 - [Glossary (EN)](docs/en/glossary.md) / [Glossary (VI)](docs/vi/glossary.md) — short definitions of the durability, writer status, managed vs classic, and admin-state terms used in the guide and operations note.
 
 ## Requirements

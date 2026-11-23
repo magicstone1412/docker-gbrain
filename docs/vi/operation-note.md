@@ -263,6 +263,72 @@ Một số nguyên nhân thường gặp:
 
 Nếu chưa rõ, hãy sao lưu database và toàn bộ thư mục `brain/` trước khi can thiệp. Database và Git checkout là hai lớp dữ liệu khác nhau; một lớp có thể đã chứa thay đổi dù lớp còn lại chưa hoàn tất.
 
+## Chuyển VPS hoặc brain host: xử lý `recovery_required` không có `detail`
+
+Khi chuyển VPS hoặc host chứa brain, `write-request` có thể trả về `recovery_required` mà không kèm `detail`. Trường hợp này thường xảy ra khi nội dung của `./brain` được giữ lại nhưng **chính thư mục root đã được tạo lại** trên filesystem khác. Đây không phải nguyên nhân do đổi owner bằng `chown` hoặc chuyển tiến trình sang non-root.
+
+### Kiểm tra dấu vân tay của root
+
+Chạy các lệnh sau từ thư mục chứa Compose để đối chiếu reservation, stamp, binding trong database và thư mục thực tế. Không chia sẻ token hoặc các ID owner đầy đủ trong kết quả.
+
+```sh
+# 1. Reservation: lock path và dấu vân tay ban đầu
+grep -o '"\(root\|coordinationPath\|initialDevice\|initialInode\|initialBirth\)":"[^"]*"' ./state/.gbrain-owner-*.json
+
+# 2. Stamp trong thư mục brain
+grep -o '"\(root\|device\|inode\|birth\)":"[^"]*"' ./brain/.gbrain-owner.json
+
+# 3. Binding trong DB
+docker exec gbrain-postgres psql -U gbrain -d gbrain -Atc \
+  "select local_path, coordination_path from persistence_host_bindings"
+
+# 4. Thông số thực của thư mục
+docker exec gbrain stat -c 'dev=%d ino=%i birth_sec=%W' /data/brain
+```
+
+`root` và `coordinationPath` của reservation, stamp và database phải là các đường dẫn mong đợi. So sánh `device`, `inode` và thời điểm tạo (`birth`) của stamp/reservation với `/data/brain` hiện tại. Ví dụ dấu hiệu root bị tạo lại:
+
+| | Lúc claim (stamp = reservation) | Hiện tại (`/data/brain`) |
+| --- | --- | --- |
+| device | `65025` (`254:1`) | `2049` (`8:1`) |
+| inode | `524624` | `266099` |
+| thời điểm tạo thư mục | 2026-06-15 13:50 UTC | **2026-11-22 12:11 UTC** |
+
+Khi `inode` và `birth` đều lệch, đồng thời `device` cũng lệch, `/data/brain` là thư mục khác với thư mục đã được gbrain đóng dấu. Một bản sao hoặc phục hồi dự án bằng `cp -a` hay `rsync -a` có thể giữ `mtime` của `./brain` và file marker, nhưng luôn tạo `inode`, `birth` và có thể cả `device` mới. Theo `assertPhysicalRootStamp` của upstream, tổ hợp sai khác này ném lỗi chung `recovery_required` không có `detail`.
+
+### Sửa bằng self-transfer có xác nhận root đã chuyển
+
+Runbook upstream [`topologies.md#recreated-root`](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md#recreated-root) mô tả trường hợp cùng đường dẫn nhưng thư mục root mới. `--confirm-relocated-root` chỉ bỏ qua so sánh định danh vật lý. Gbrain vẫn yêu cầu token, brain ID, worktree ID, `root` và `coordinationPath` của stamp và reservation khớp nhau; nếu không khớp, lệnh sẽ từ chối và không thay đổi gì.
+
+Trước khi thực hiện, sao lưu database và các file ownership/configuration:
+
+```sh
+docker exec gbrain-postgres pg_dump -U gbrain gbrain | gzip > gbrain-db-$(date +%F).sql.gz
+tar czf gbrain-files-$(date +%F).tgz state brain/.gbrain-owner.json .config
+```
+
+Với Docker image này, chạy mỗi lệnh gbrain bằng user của host bind mount: thêm `docker exec -u 1000:1000 gbrain` phía trước các lệnh sau. Thay `1000:1000` bằng `PUID:PGID` đang dùng nếu khác.
+
+```sh
+# 1. Lấy admin_state và owner_epoch hiện tại
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer status default --json | grep -E '"admin_state"|"owner_epoch"'
+
+# 2. Prepare: chỉ đọc kết quả, không phá hủy dữ liệu
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer transfer prepare default --self-transfer --confirm-relocated-root \
+  --admin-intent writer_transfer_prepare --expected-state <admin_state>
+
+# 3. Accept: lấy manifest từ bước 2; lấy lại admin_state trước khi chạy
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer transfer accept default --path /data/brain \
+  --expected-epoch <owner_epoch> --manifest <manifest_digest> \
+  --self-transfer --confirm-relocated-root \
+  --admin-intent writer_transfer_accept --expected-state <admin_state_moi>
+```
+
+`admin_state` thay đổi sau mỗi thao tác quản trị, vì vậy không dùng lại giá trị cũ ghi trong log. `--confirm-relocated-root` phải xuất hiện ở **cả prepare và accept**; thiếu ở một trong hai bước sẽ bị từ chối với `writer_transfer_conflict`. Nếu `prepare` từ chối hoặc báo lỗi, dừng lại và xem kết quả trước khi chạy `accept`.
+
 ## Chọn chế độ vận hành
 
 | Chế độ | Cách xử lý chính | Phù hợp với |

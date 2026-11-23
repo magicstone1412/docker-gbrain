@@ -263,6 +263,72 @@ Common causes include:
 
 If the situation is unclear, back up the database and the complete `brain/` directory before intervening. The database and Git checkout are separate data layers; one may contain a change even while the other is incomplete.
 
+## Moving a VPS or brain host: handle `recovery_required` without `detail`
+
+After moving the VPS or host that contains the brain, `write-request` may return `recovery_required` without a `detail`. This usually means the contents of `./brain` were preserved but the **root directory itself was recreated** on a different filesystem. Changing ownership with `chown` or moving the process to a non-root user is not the primary cause.
+
+### Check the root fingerprint
+
+Run these commands from the Compose directory to compare the reservation, stamp, database binding, and actual directory. Do not share the token or full owner IDs from their output.
+
+```sh
+# 1. Reservation: lock path and original fingerprint
+grep -o '"\(root\|coordinationPath\|initialDevice\|initialInode\|initialBirth\)":"[^"]*"' ./state/.gbrain-owner-*.json
+
+# 2. Stamp inside the brain directory
+grep -o '"\(root\|device\|inode\|birth\)":"[^"]*"' ./brain/.gbrain-owner.json
+
+# 3. Database binding
+docker exec gbrain-postgres psql -U gbrain -d gbrain -Atc \
+  "select local_path, coordination_path from persistence_host_bindings"
+
+# 4. Actual directory identity
+docker exec gbrain stat -c 'dev=%d ino=%i birth_sec=%W' /data/brain
+```
+
+The `root` and `coordinationPath` in the reservation, stamp, and database must be the expected paths. Compare the stamp/reservation `device`, `inode`, and creation time (`birth`) with the current `/data/brain`. For example, this indicates a recreated root:
+
+| | At claim time (stamp = reservation) | Current (`/data/brain`) |
+| --- | --- | --- |
+| device | `65025` (`254:1`) | `2049` (`8:1`) |
+| inode | `524624` | `266099` |
+| directory creation time | 2026-06-15 13:50 UTC | **2026-11-22 12:11 UTC** |
+
+When `inode` and `birth` both differ and `device` also differs, `/data/brain` is a different directory from the one that gbrain stamped. Copying or restoring the project with `cp -a` or `rsync -a` can preserve the `mtime` of `./brain` and its marker file while creating a new `inode`, `birth`, and possibly `device`. According to the upstream `assertPhysicalRootStamp`, this combination throws the generic `recovery_required` error without a `detail`.
+
+### Fix with a self-transfer that confirms the relocated root
+
+The upstream [`topologies.md#recreated-root`](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md#recreated-root) runbook covers the case of the same path with a newly created root directory. `--confirm-relocated-root` only bypasses the physical-identity comparison. Gbrain still requires the token, brain ID, worktree ID, `root`, and `coordinationPath` in the stamp and reservation to match; otherwise it refuses the operation without changing anything.
+
+Before proceeding, back up the database and ownership/configuration files:
+
+```sh
+docker exec gbrain-postgres pg_dump -U gbrain gbrain | gzip > gbrain-db-$(date +%F).sql.gz
+tar czf gbrain-files-$(date +%F).tgz state brain/.gbrain-owner.json .config
+```
+
+For this Docker image, run each gbrain command as the host bind-mount user by adding `docker exec -u 1000:1000 gbrain` before the commands below. Replace `1000:1000` with the configured `PUID:PGID` when it differs.
+
+```sh
+# 1. Get the current admin_state and owner_epoch
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer status default --json | grep -E '"admin_state"|"owner_epoch"'
+
+# 2. Prepare: read the result; this does not destroy data
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer transfer prepare default --self-transfer --confirm-relocated-root \
+  --admin-intent writer_transfer_prepare --expected-state <admin_state>
+
+# 3. Accept: get the manifest from step 2; fetch admin_state again before running
+docker exec -u 1000:1000 gbrain \
+  gbrain sources writer transfer accept default --path /data/brain \
+  --expected-epoch <owner_epoch> --manifest <manifest_digest> \
+  --self-transfer --confirm-relocated-root \
+  --admin-intent writer_transfer_accept --expected-state <new_admin_state>
+```
+
+`admin_state` changes after every administrative operation, so do not reuse an old value from a log. `--confirm-relocated-root` must appear in **both prepare and accept**; omitting it from either step is refused with `writer_transfer_conflict`. If `prepare` is refused or fails, stop and inspect its output before running `accept`.
+
 ## Choose an operating mode
 
 | Mode | Main behavior | Suitable for |
