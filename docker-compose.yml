@@ -35,28 +35,11 @@ services:
     container_name: gbrain
     restart: unless-stopped
     environment:
-      # sslmode=disable: Postgres runs in the same private Docker network
-      # (gbrain-net) without TLS. Newer gbrain requires TLS for non-local hosts
-      # by default, so TLS is explicitly turned off for this trusted network.
-      # If Postgres is on another machine/untrusted network, enable TLS on the
-      # server and use sslmode=require (or verify-full) instead.
       DATABASE_URL: postgresql://gbrain:gbrain123@gbrain-postgres:5432/gbrain?sslmode=disable
       # Changing this back to classic requires `gbrain sources writer deactivate`
       # first; classic sync is refused on an activated managed brain.
       GBRAIN_MODE: managed
-      # Managed brains never pull by themselves. This defaults to true so a
-      # `gbrain sources refresh` runs before every sync cycle and commits pushed
-      # to origin from another machine reach this checkout (fast-forward only).
-      # Set to false to disable. While a refresh drains writes, a page write can
-      # be refused for a moment.
       GBRAIN_REFRESH_UPSTREAM: ${GBRAIN_REFRESH_UPSTREAM:-true}
-      # Optional overrides (defaults: /data/brain and default). Leave them
-      # unset unless you are building a NEW brain with another layout: on a
-      # managed brain BRAIN_DIR must equal the claimed path, otherwise the
-      # container refuses to start. The volume mounts below must follow it, and
-      # the parent of BRAIN_DIR must also be a persistent mount (reservation).
-      # BRAIN_DIR: ${BRAIN_DIR:-/data/brain}
-      # GBRAIN_SOURCE_ID: ${GBRAIN_SOURCE_ID:-default}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
@@ -68,17 +51,7 @@ services:
       # Maximum USD per non-interactive background embedding run.
       EMBED_MAX_USD_PER_RUN: ${EMBED_MAX_USD_PER_RUN-1}
       # --- Autopilot daemon ---
-      # Default: on. The entrypoint runs `gbrain autopilot --install` (target is
-      # auto-detected; inside Docker it writes ~/.gbrain/start-autopilot.sh, kept on
-      # the ./.config volume) and starts it on every container start. The daemon owns
-      # the jobs worker, so no standalone `gbrain jobs work` is started. Set to
-      # false to disable it (the entrypoint then starts a standalone worker).
-      # Needs VOYAGE_API_KEY or OPENAI_API_KEY; its chat phases (chronicle/dream/
-      # enrich) also need OPENAI_API_KEY or ANTHROPIC_API_KEY.
-      # Operate it from the host and never start a second daemon by hand:
-      #   docker exec gbrain gbrain autopilot --status --json
-      #   docker exec gbrain gbrain autopilot pause --reason "<why>"   (then: resume)
-      # Changing this value needs `docker compose up -d` to recreate the container.
+      # Set AUTOPILOT_ENABLED=true to run gbrain autopilot in the background.
       AUTOPILOT_ENABLED: ${AUTOPILOT_ENABLED:-true}
       # Optional: URL that the Hermes host actually calls (OAuth issuer).
       # GBRAIN_PUBLIC_URL: ${GBRAIN_PUBLIC_URL:-}
@@ -92,13 +65,18 @@ services:
       # PGID=$(id -g) in .env) so the mounted SSH key is readable too.
       # (Alternative without any chown: `user: "1000:1000"` on this service,
       # with the host dirs already owned by that uid.)
-      PUID: ${PUID:-0}
-      PGID: ${PGID:-0}
-      # Home and config location, identical for root and non-root (set in the
-      # Dockerfile too). The mounts below must target this path.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      # Home and config location, identical for root and non-root (also set in
+      # the Dockerfile). The volume mounts below must target this path.
       GBRAIN_HOME: /home/gbrain
-      # SSH is configured by the entrypoint (keys are copied to a private 0600
-      # temp dir, so GIT_SSH_COMMAND no longer has to be set here).
+      # SSH is configured by the entrypoint: it copies the mounted keys to
+      # /home/gbrain/.ssh-runtime (0700, keys 0600) and writes an ssh_config the
+      # image includes system-wide, so the :ro mount works for any uid, also in
+      # `docker exec` shells. GIT_SSH_COMMAND no longer needs to be set here.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /data/brain
     ports:
       # Reachable from the separate Hermes host over the network. Since this
       # is no longer loopback/internal-bridge-only, restrict at the firewall
@@ -111,6 +89,13 @@ services:
       - ./state:/data
       - ./brain:/data/brain
       - ./.config:/home/gbrain/.gbrain
+      # Compat mount, KEEP IT: the writer lock path was recorded as
+      # /root/.gbrain/persistence/locks/<id>.lock while the container ran as
+      # root, and gbrain never relocates a recorded lock (it always wins over
+      # any env). Same host dir, second mount point, so the recorded path stays
+      # valid. The entrypoint makes /root traversable (chmod o+x) for the
+      # non-root writer.
+      - ./.config:/root/.gbrain
       - ${HOME}/.ssh:/home/gbrain/.ssh:ro
     depends_on:
       gbrain-postgres:
