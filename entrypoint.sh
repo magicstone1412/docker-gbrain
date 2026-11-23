@@ -110,6 +110,8 @@ if [ "$CUR_UID" = "0" ]; then
     TARGET_CFG="$TARGET_HOME/.gbrain"
     echo "Running as root: preparing dirs for uid:gid $PUID:$PGID, then dropping privileges..."
     mkdir -p "$TARGET_HOME" "$TARGET_CFG" "$BRAIN_DIR"
+    # SSH runtime dir (section 5b) may belong to a previous PUID; recreate it.
+    rm -rf "${SSH_RUNTIME_DIR:-/home/gbrain/.ssh-runtime}"
     fix_owner "$TARGET_HOME" shallow
     fix_owner "$TARGET_CFG" recursive
     fix_owner "$BRAIN_DIR" recursive
@@ -378,7 +380,24 @@ done
 
 SSH_ID_ARGS=""
 if [ -n "$SSH_SRC" ]; then
-  SSH_RT=$(mktemp -d)
+  # Fixed, user-owned dir (not a random mktemp path) so that the ssh client
+  # config below is found by EVERY process in the container, including shells
+  # opened later with `docker exec` (those do not inherit this script's env and
+  # run with HOME=/root). The image links it in through
+  # /etc/ssh/ssh_config.d/50-gbrain.conf (see Dockerfile).
+  SSH_RT="${SSH_RUNTIME_DIR:-/home/gbrain/.ssh-runtime}"
+  rm -rf "$SSH_RT" 2>/dev/null || true
+  if ! mkdir -p "$SSH_RT" 2>/dev/null || ! chmod 700 "$SSH_RT" 2>/dev/null || [ ! -w "$SSH_RT" ]; then
+    SSH_RT=$(mktemp -d)
+    echo "  [warn] cannot use ${SSH_RUNTIME_DIR:-/home/gbrain/.ssh-runtime}; ssh settings will NOT apply to 'docker exec' shells (only to this container's own processes)"
+  fi
+  SSH_CONF="$SSH_RT/ssh_config"
+  {
+    echo "Host *"
+    echo "  IdentitiesOnly yes"
+    echo "  StrictHostKeyChecking accept-new"
+    echo "  UserKnownHostsFile $SSH_RT/known_hosts"
+  } > "$SSH_CONF"
   for k in "$SSH_SRC"/id_*; do
     [ -f "$k" ] || continue
     case "$k" in *.pub) continue ;; esac
@@ -386,10 +405,13 @@ if [ -n "$SSH_SRC" ]; then
     if cp "$k" "$SSH_RT/$kn" 2>/dev/null; then
       chmod 600 "$SSH_RT/$kn"
       SSH_ID_ARGS="$SSH_ID_ARGS -i $SSH_RT/$kn"
+      echo "  IdentityFile $SSH_RT/$kn" >> "$SSH_CONF"
     else
       echo "  [warn] cannot read $k as uid $(id -u) (check key owner/mode vs PUID/PGID)"
     fi
   done
+  chmod 644 "$SSH_CONF"
+  [ -n "$SSH_ID_ARGS" ] || rm -f "$SSH_CONF"
 fi
 
 if [ -n "$SSH_ID_ARGS" ]; then
@@ -401,6 +423,8 @@ if [ -n "$SSH_ID_ARGS" ]; then
     && echo "  known_hosts seeded for github.com" \
     || echo "  ssh-keyscan failed — relying on accept-new"
 
+  chmod 644 "$KNOWN_HOSTS" 2>/dev/null || true
+  # Env var for this script's own children; docker exec shells use ssh_config.
   export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KNOWN_HOSTS -o IdentitiesOnly=yes$SSH_ID_ARGS"
 
   if [ -n "$BRAIN_REMOTE" ]; then

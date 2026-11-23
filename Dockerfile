@@ -46,6 +46,11 @@ COPY --from=builder /app /app
 # $GBRAIN_HOME/.gbrain, ssh keys in $GBRAIN_HOME/.ssh). It is pre-owned by uid
 # 1000 so `user: "1000:1000"` works without any chown.
 ENV GBRAIN_HOME=/home/gbrain
+# Lets every ssh client in the container (entrypoint children AND `docker exec`
+# shells, whatever user/HOME) pick up the keys the entrypoint prepares at
+# runtime. A missing Include target is silently ignored.
+RUN mkdir -p /etc/ssh/ssh_config.d \
+    && echo 'Include /home/gbrain/.ssh-runtime/ssh_config' > /etc/ssh/ssh_config.d/50-gbrain.conf
 RUN ln -s /app/bin/gbrain /usr/local/bin/gbrain \
     && chmod -R a+rX /app \
     && (getent passwd 1000 >/dev/null || useradd -u 1000 -U -M -d /home/gbrain -s /bin/sh gbrain) \
