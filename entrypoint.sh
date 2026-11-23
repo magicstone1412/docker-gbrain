@@ -82,14 +82,21 @@ require_writable() {
   exit 77
 }
 
-# chown $1 only when its owner differs (avoids a slow -R on every restart).
-# $2 = recursive|shallow. Never fatal: read-only / squashed mounts only warn.
+# Make $1 belong to $PUID:$PGID. $2 = recursive|shallow. Never fatal: read-only
+# or squashed mounts only warn.
+# recursive: look at EVERY entry, not just the top directory. A root shell
+# (`docker exec` without -u) or an earlier root run leaves root-owned files
+# deeper down (e.g. .gbrain/persistence/locks/*.lock, mode 0600), and a
+# non-root writer then fails with EACCES. Only mismatching entries are
+# chowned, so a clean tree costs one fast `find` and no writes.
 fix_owner() {
   [ -e "$1" ] || return 0
-  [ "$(stat -c %u:%g "$1" 2>/dev/null)" = "$PUID:$PGID" ] && return 0
   if [ "$2" = "recursive" ]; then
-    chown -R "$PUID:$PGID" "$1" 2>/dev/null || echo "  [warn] could not chown -R $1 to $PUID:$PGID"
+    find "$1" \( ! -uid "$PUID" -o ! -gid "$PGID" \) \
+      -exec chown -h "$PUID:$PGID" {} + 2>/dev/null \
+      || echo "  [warn] could not chown everything under $1 to $PUID:$PGID"
   else
+    [ "$(stat -c %u:%g "$1" 2>/dev/null)" = "$PUID:$PGID" ] && return 0
     chown "$PUID:$PGID" "$1" 2>/dev/null || echo "  [warn] could not chown $1 to $PUID:$PGID"
   fi
 }
