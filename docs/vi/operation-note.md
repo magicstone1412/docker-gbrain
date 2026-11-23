@@ -1,14 +1,14 @@
-# Q&A: đồng bộ và phục hồi brain từ Git
+# Ghi chú vận hành: đồng bộ và phục hồi brain từ Git
 
-Tài liệu này trả lời trường hợp `/data/brain` được lưu trong Git và có một máy khác clone repository đó để chỉnh sửa rồi push lên remote (ví dụ GitHub). Câu hỏi cuối trả lời cách phục hồi brain khi sự cố xảy ra và chỉ còn repository trên GitHub.
+Ghi chú này hướng dẫn vận hành `/data/brain` khi brain được lưu trong Git, có máy khác clone repository để chỉnh sửa và push lên remote (ví dụ GitHub), hoặc khi cần phục hồi sau sự cố chỉ còn repository trên GitHub.
 
 > **Phạm vi:** Nội dung tập trung vào `GBRAIN_MODE=managed`, là chế độ Compose sử dụng. Các lệnh và hành vi có thể thay đổi theo phiên bản gbrain; khi xử lý sự cố, ưu tiên thông báo lỗi và tài liệu của đúng phiên bản đang chạy.
 
-## Bắt đầu từ đâu?
+## Chuẩn bị brain repository
 
 Bắt đầu từ schema brain được khuyến nghị của upstream: [GBRAIN_RECOMMENDED_SCHEMA.md](https://github.com/garrytan/gbrain/blob/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md). Tài liệu mô tả các file và quy ước trang mà một brain repository nên tuân theo; hãy dùng nó làm khuôn khi khởi tạo `/data/brain` lần đầu.
 
-## Tóm tắt ngắn
+## Nguyên tắc vận hành
 
 - Một commit được push từ máy khác **không tự động xuất hiện** trong checkout của brain host ở managed mode.
 - Cách upstream hỗ trợ để đưa commit từ remote vào managed checkout là:
@@ -32,13 +32,13 @@ Bắt đầu từ schema brain được khuyến nghị của upstream: [GBRAIN_
 - **Không dùng `git pull`, `git pull --rebase`, `git reset` hoặc sửa trực tiếp các file page trong managed checkout.** Managed worktree có owner/coordinator riêng; ghi Git trực tiếp có thể bị từ chối hoặc làm database và checkout lệch nhau.
 - Cách an toàn nhất để thay đổi nội dung từ máy khác là dùng máy đó làm **MCP client** và ghi qua gbrain, thay vì coi brain host và máy kia là hai Git writer ngang hàng.
 
-# Hỏi đáp: Tôi sửa `RESOLVER.md` trực tiếp, làm sao cập nhật vào gbrain managed?
+## Xử lý file bị lệch khỏi database (drift)
 
-**Q1. Tại sao sửa file xong lại cần làm thêm bước nào đó?**
+### Nhận biết drift
 
 Ở chế độ `GBRAIN_MODE: managed`, mọi lần ghi vào page đều đi qua gbrain để database và file luôn khớp nhau. Khi bạn sửa thẳng file trong `/data/brain`, file khác database. gbrain gọi tình trạng này là **drift**. Page bị drift sẽ từ chối mọi lần ghi có điều phối (`source_changed`) và maintenance bỏ qua page đó, cho tới khi bạn chọn bản nào là đúng.
 
-**Q2. Làm sao biết page đang bị drift?**
+### Kiểm tra drift
 
 Chạy `gbrain doctor`. Nếu có dòng này là có drift:
 
@@ -46,7 +46,7 @@ Chạy `gbrain doctor`. Nếu có dòng này là có drift:
 [WARN] maintenance_write_drift: 1 page(s) have a canonical file that differs from the database ...
 ```
 
-**Q3. Làm sao biết chính xác page nào bị lệch?**
+### Xác định page bị lệch
 
 ```bash
 gbrain sources reconcile default --brain host --audit --conflicts
@@ -54,7 +54,7 @@ gbrain sources reconcile default --brain host --audit --conflicts
 
 Chỉ quan tâm slug có `still_present.reason: "file_database_drift"` (với resolver là slug `resolver`, file `RESOLVER.md`). Các slug có `agrees` là xung đột cũ đã khớp lại, còn `page_missing` là page đã bị xóa. Hai loại này không cần xử lý.
 
-**Q4. Tôi sửa file và muốn database theo file. Lệnh nào?**
+### Nhập file vào database
 
 Dùng `--prefer file`. Làm theo thứ tự:
 
@@ -94,34 +94,34 @@ gbrain repair file-drift --source default --slug resolver --prefer file --apply 
 
 Hash của hai page khác nhau, nên làm xong page này rồi mới chạy preview page kia.
 
-**Q5. Cần kiểm tra gì ở bước preview trước khi apply?**
+### Kiểm tra preview trước khi áp dụng
 
 - `file-drift: 1 item(s) to repair` và `e.g. default:resolver`: danh sách chỉ có page bạn sửa. Vì `--all-drifted` áp dụng cho mọi page lệch, nếu thấy page lạ thì dừng lại.
 - `prefer_file: ... (exactly the preferred side)` và `import the file into the page`: gbrain sẽ nhập nội dung file vào database.
 - Dòng `unknown: ... page_missing` là các page đã bị xóa. Lệnh không đụng tới chúng, bỏ qua được.
 - Dòng `cost`: thường 1 page cần embed lại, chi phí gần như bằng 0.
 
-**Q6. Có gì được giữ nguyên, có gì bị đổi?**
+### Phạm vi thay đổi khi ưu tiên file
 
 Theo thông báo của preview: metadata được bảo vệ vẫn giữ theo database, tags là hợp của cả hai bên, còn takes được bảo vệ và private fact rows được giữ. File của bạn không bị thay đổi, vì lệnh chỉ import file vào database.
 
-**Q7. Tôi muốn ngược lại, lấy database ghi đè file thì sao?**
+### Ghi database đè lên file
 
 Dùng `--prefer database` thay cho `--prefer file`, cùng quy trình preview rồi apply. Cẩn thận vì file sẽ bị ghi đè, hãy sao lưu trước.
 
-**Q8. Lệnh apply báo `STOPPED: writer_lock_unavailable`. Có hỏng không?**
+### Xử lý `STOPPED: writer_lock_unavailable`
 
 Không hỏng. Đó là hành vi đã thấy với `repair stale-atoms`: lệnh chạy một lần từ CLI mất quyền ghi giữa chừng, nhưng tiến độ được lưu. Chạy lại đúng lệnh là nó tiếp tục. Với file-drift chỉ 1 page nên thường xong ngay. Lúc đó đừng xóa file `.lock` và đừng tự kill tiến trình `serve`.
 
-**Q9. Autopilot có ảnh hưởng không?**
+### Khôi phục autopilot
 
 Nếu bạn đã chạy `gbrain autopilot pause`, nhớ chạy `gbrain autopilot resume` khi xong. Bản pause được giữ qua `gbrain upgrade` và `--install`, nên quên là autopilot không tự chạy lại.
 
-**Q10. Làm sao tránh drift về sau?**
+### Ngăn drift tái diễn
 
 Cách chắc chắn nhất là sửa page qua công cụ của gbrain thay vì sửa file trực tiếp.
 
-## Câu hỏi: Tôi push một commit từ máy khác. Brain host có tự nhận biết không?
+## Đồng bộ commit từ máy khác
 
 Không, nếu brain host đang ở managed mode.
 
@@ -142,7 +142,7 @@ gbrain sync --source default --no-pull
 
 `refresh` sẽ đưa checkout tiến lên theo kiểu **fast-forward** và đồng bộ các thay đổi vào database. Nó không phải là merge tùy ý.
 
-## Câu hỏi: Có thể để container tự lấy commit mới không?
+## Tự động refresh commit từ remote
 
 Có. Đặt biến môi trường:
 
@@ -177,7 +177,7 @@ gbrain sources refresh default --dry-run
 
 Biến này bị bỏ qua trong classic mode hoặc khi repository không có `origin`.
 
-## Câu hỏi: Nếu máy khác commit trực tiếp lên brain repository thì có an toàn không?
+## Rủi ro của thao tác Git trực tiếp
 
 Không nên xem đó là quy trình bình thường trong managed mode.
 
@@ -212,7 +212,7 @@ Nếu file và database cùng thay đổi theo các hướng khác nhau, gbrain 
 
 Nếu commit từ remote đã được nhìn thấy nhưng chưa được import, thao tác ghi vào page đó có thể bị từ chối với trạng thái tương tự `pending_import`. Hãy hoàn tất refresh/sync và đọc chính xác `suggestion` trong lỗi trước khi thử lại.
 
-## Câu hỏi: Quy trình an toàn nếu vẫn bắt buộc dùng máy khác để push là gì?
+## Quy trình bắt buộc phải push từ máy khác
 
 Giảm tối đa thời gian hai writer cùng hoạt động:
 
@@ -242,7 +242,7 @@ Giảm tối đa thời gian hai writer cùng hoạt động:
 
 `git pull --rebase` trên **clone riêng của máy kia** chỉ là thao tác chuẩn bị clone đó; không được chạy nó trong managed checkout mà gbrain đang dùng làm canonical worktree.
 
-## Câu hỏi: Nếu refresh bị từ chối thì tôi nên làm gì?
+## Xử lý refresh bị từ chối
 
 Không tự ý xóa marker owner, sửa database, reset HEAD hoặc force-push. Trước tiên lấy lý do cụ thể:
 
@@ -263,7 +263,7 @@ Một số nguyên nhân thường gặp:
 
 Nếu chưa rõ, hãy sao lưu database và toàn bộ thư mục `brain/` trước khi can thiệp. Database và Git checkout là hai lớp dữ liệu khác nhau; một lớp có thể đã chứa thay đổi dù lớp còn lại chưa hoàn tất.
 
-## Câu hỏi: Có khác biệt gì giữa classic và managed?
+## Chọn chế độ vận hành
 
 | Chế độ | Cách xử lý chính | Phù hợp với |
 | --- | --- | --- |
@@ -272,7 +272,7 @@ Nếu chưa rõ, hãy sao lưu database và toàn bộ thư mục `brain/` trư�
 
 Trong managed mode, `gbrain serve` phải chạy với source đã được claim và activate. Không chuyển qua lại giữa hai mode khi writer vẫn đang hoạt động. Hãy làm theo runbook của upstream để quiesce, deactivate/activate và kiểm tra trạng thái.
 
-## Câu hỏi: Git remote có tự động bảo vệ dữ liệu khi tôi push thủ công không?
+## Kiểm soát dữ liệu trước khi push thủ công
 
 Không hoàn toàn.
 
@@ -285,7 +285,7 @@ Không commit các file sau vào repository:
 - `.config`, runtime state hoặc dữ liệu nhạy cảm;
 - các file không thuộc brain nhưng vô tình nằm trong checkout.
 
-## Câu hỏi: Giả sử brain có sự cố và chỉ còn repo trên GitHub, phục hồi gbrain trở lại ban đầu như thế nào?
+## Phục hồi khi chỉ còn repository Git
 
 Theo tài liệu upstream về việc dựng lại brain từ repo Git (`system-of-record.md`, mục "Disaster recovery"), trả lời ngắn: **phục hồi được phần nội dung nằm trong file, không phục hồi được phần chỉ nằm trong DB.** Các bước dưới đây nên được diễn tập trước (xem mục 5).
 
@@ -336,7 +336,7 @@ Một biến thể khác: nếu chỉ mất DB nhưng còn `./brain`, `./state`,
 2. **`pg_dump` định kỳ sang nơi khác máy** (object storage hoặc máy khác, mã hóa). Phần DB-only trong bảng trên chỉ cứu được bằng cách này.
 3. **Diễn tập phục hồi** trong project compose tách biệt: tên project khác, Postgres và `./brain` riêng, không publish cổng 7333, không đặt `BRAIN_REMOTE`, `AUTOPILOT_ENABLED=false`, không có key embed (entrypoint sẽ chạy `--no-embedding`, không tốn tiền). Quan trọng: đặt `git remote set-url --push origin no_push` trong checkout diễn tập để tuyệt đối không push nhầm lên GitHub thật. So `gbrain stats` sau `sync` và `extract all` với baseline. Làm mỗi quý một lần.
 
-## Tài liệu upstream nên đọc khi xử lý sự cố
+## Tài liệu upstream khi xử lý sự cố
 
 - [Topologies — gbrain](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md): ownership, claim/activate và managed persistence.
 - [Shared-checkout Git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md): nguyên tắc không tự thao tác Git trên managed worktree và cách xử lý checkout/remote.

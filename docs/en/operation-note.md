@@ -1,14 +1,14 @@
-# Q&A: syncing and restoring a brain from Git
+# Operations Note: Syncing and Restoring a Brain from Git
 
-This guide covers the case where `/data/brain` is stored in Git and another machine clones that repository, edits it, and pushes to a remote such as GitHub. The last question covers how to restore the brain after a failure when only the repository on GitHub remains.
+This note covers operating `/data/brain` when it is stored in Git and another machine clones the repository, edits it, and pushes to a remote such as GitHub, as well as recovery after a failure when only the GitHub repository remains.
 
 > **Scope:** The examples focus on `GBRAIN_MODE=managed`, which is the mode used by this repository's Compose deployment. Commands and refusal details can change between gbrain releases; when troubleshooting, follow the error and recovery suggestion from the version you are running.
 
-## Where do I start?
+## Prepare the brain repository
 
 Start with the upstream recommended brain schema: [GBRAIN_RECOMMENDED_SCHEMA.md](https://github.com/garrytan/gbrain/blob/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md). It describes the files and page conventions a brain repository should follow, so use it as the template when setting up `/data/brain` for the first time.
 
-## Short answer
+## Operating principles
 
 - A commit pushed from another machine does **not automatically appear** in the brain host's checkout in managed mode.
 - The upstream-supported way to bring remote commits into a managed checkout is:
@@ -32,13 +32,13 @@ Start with the upstream recommended brain schema: [GBRAIN_RECOMMENDED_SCHEMA.md]
 - **Do not run `git pull`, `git pull --rebase`, `git reset`, or manually edit page files in the managed checkout.** A managed worktree has its own owner/coordinator; direct Git writes may be refused or may leave the database and checkout out of sync.
 - The safest way to change content from another machine is to use that machine as an **MCP client** and write through gbrain, rather than treating the brain host and the other machine as equal Git writers.
 
-# FAQ: I edited `RESOLVER.md` directly. How do I update gbrain managed?
+## Resolve file/database drift
 
-**Q1. Why do I need an extra step after editing the file?**
+### Understand drift
 
 In `GBRAIN_MODE: managed`, every page write goes through gbrain so the database and file stay in sync. When you edit a file directly in `/data/brain`, the file differs from the database. gbrain calls this condition **drift**. A drifted page refuses coordinated writes (`source_changed`), and maintenance skips that page until you choose which side is authoritative.
 
-**Q2. How do I know whether a page has drifted?**
+### Check for drift
 
 Run `gbrain doctor`. Drift is present if you see this line:
 
@@ -46,7 +46,7 @@ Run `gbrain doctor`. Drift is present if you see this line:
 [WARN] maintenance_write_drift: 1 page(s) have a canonical file that differs from the database ...
 ```
 
-**Q3. How do I identify exactly which page is different?**
+### Identify drifted pages
 
 ```bash
 gbrain sources reconcile default --brain host --audit --conflicts
@@ -54,7 +54,7 @@ gbrain sources reconcile default --brain host --audit --conflicts
 
 Only pay attention to slugs with `still_present.reason: "file_database_drift"` (`resolver` is the slug for `RESOLVER.md`). Slugs with `agrees` are old conflicts that are now reconciled, while `page_missing` means the page has been deleted. These two types need no action.
 
-**Q4. I edited the file and want the database to follow the file. Which command should I use?**
+### Import the file into the database
 
 Use `--prefer file`. Follow these steps:
 
@@ -94,34 +94,34 @@ gbrain repair file-drift --source default --slug resolver --prefer file --apply 
 
 The two pages have different hashes, so finish one page before running the preview for the other.
 
-**Q5. What should I check in the preview before applying it?**
+### Review the preview before applying
 
 - `file-drift: 1 item(s) to repair` and `e.g. default:resolver`: the list contains only the page you edited. Because `--all-drifted` applies to every drifted page, stop if you see an unexpected page.
 - `prefer_file: ... (exactly the preferred side)` and `import the file into the page`: gbrain will import the file content into the database.
 - A line such as `unknown: ... page_missing` refers to pages that have been deleted. The command does not touch them, so you can ignore it.
 - The `cost` line: normally one page needs to be embedded again, at nearly zero cost.
 
-**Q6. What stays unchanged, and what changes?**
+### What changes when preferring the file
 
 According to the preview message, protected metadata remains from the database, tags are merged from both sides, protected takes and private fact rows are preserved. Your file is not changed because the command only imports the file into the database.
 
-**Q7. What if I want the database to overwrite the file instead?**
+### Write the database over the file
 
 Use `--prefer database` instead of `--prefer file`, following the same preview-then-apply process. Be careful because the file will be overwritten; back it up first.
 
-**Q8. Is something broken if apply reports `STOPPED: writer_lock_unavailable`?**
+### Handle `STOPPED: writer_lock_unavailable`
 
 No. This is behavior also seen with `repair stale-atoms`: a one-off CLI command can lose write access partway through, while progress is saved. Run the same command again and it will continue. With only one file-drift page, it usually finishes immediately. Do not delete the `.lock` file or kill the `serve` process yourself.
 
-**Q9. Does autopilot affect this?**
+### Resume autopilot
 
 If you ran `gbrain autopilot pause`, remember to run `gbrain autopilot resume` when finished. The pause state survives `gbrain upgrade` and `--install`, so autopilot will not start running again automatically if you forget.
 
-**Q10. How can I avoid drift in the future?**
+### Prevent drift from recurring
 
 The most reliable approach is to edit pages through gbrain tools instead of editing files directly.
 
-## Does the brain host notice when another machine pushes?
+## Sync commits from another machine
 
 Not by itself when the brain host is in managed mode.
 
@@ -142,7 +142,7 @@ gbrain sync --source default --no-pull
 
 `refresh` fast-forwards the checkout and synchronizes the changes into the database. It is not an arbitrary merge operation.
 
-## Can the container fetch new commits automatically?
+## Refresh remote commits automatically
 
 Yes. Set:
 
@@ -177,7 +177,7 @@ gbrain sources refresh default --dry-run
 
 The variable is ignored in classic mode and when the repository has no `origin` remote.
 
-## Is it safe to commit directly to the brain repository from another machine?
+## Risks of direct Git operations
 
 It should not be the normal workflow in managed mode.
 
@@ -212,7 +212,7 @@ If the file and database change in incompatible ways, gbrain may refuse the oper
 
 If a remote commit has been detected but not imported, writes to that page may be refused with a state such as `pending_import`. Complete refresh/sync and read the exact `suggestion` in the error before retrying.
 
-## What is the safest workflow if another machine must push?
+## Procedure when another machine must push
 
 Keep the period with two active writers as short as possible:
 
@@ -242,7 +242,7 @@ Keep the period with two active writers as short as possible:
 
 `git pull --rebase` on the **separate clone** is a preparation step for that clone. Do not run it in the managed checkout that gbrain uses as its canonical worktree.
 
-## What should I do if refresh is refused?
+## Handle a refused refresh
 
 Do not remove owner markers, edit the database, reset `HEAD`, or force-push. First collect the specific reason:
 
@@ -263,7 +263,7 @@ Common causes include:
 
 If the situation is unclear, back up the database and the complete `brain/` directory before intervening. The database and Git checkout are separate data layers; one may contain a change even while the other is incomplete.
 
-## How do classic and managed differ?
+## Choose an operating mode
 
 | Mode | Main behavior | Suitable for |
 | --- | --- | --- |
@@ -272,7 +272,7 @@ If the situation is unclear, back up the database and the complete `brain/` dire
 
 In managed mode, `gbrain serve` must run with a source that has already been claimed and activated. Do not switch between modes while a writer is still active. Follow upstream's runbook to quiesce, deactivate/activate, and verify the state.
 
-## Does a Git remote automatically protect data when I push manually?
+## Check data before a manual push
 
 Not completely.
 
@@ -285,7 +285,7 @@ Do not commit:
 - `.config`, runtime state, or sensitive data;
 - files unrelated to the brain that happen to be inside the checkout.
 
-## If the brain fails and only the GitHub repository remains, how do I restore gbrain to its original state?
+## Recover when only the Git repository remains
 
 According to the upstream documentation on rebuilding a brain from a Git repository (`system-of-record.md`, "Disaster recovery" section), the short answer is: **content that lives in files is recoverable; content that exists only in the database is not.** The steps below should be rehearsed in advance (see section 5).
 
@@ -336,7 +336,7 @@ A variant: if you lost only the database but still have `./brain`, `./state`, an
 2. **`pg_dump` regularly to another machine** (object storage or another machine, encrypted). The DB-only items in the table above can only be saved this way.
 3. **Rehearse recovery** in a separate compose project: different project name, its own Postgres and `./brain`, no published port 7333, no `BRAIN_REMOTE`, `AUTOPILOT_ENABLED=false`, no embed key (the entrypoint will run `--no-embedding`, costing nothing). Important: set `git remote set-url --push origin no_push` in the rehearsal checkout so it can never push to the real GitHub. Compare `gbrain stats` after `sync` and `extract all` against the baseline. Do this once a quarter.
 
-## Upstream references
+## Upstream references for troubleshooting
 
 - [Topologies — gbrain](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md): ownership, claim/activate, and managed persistence.
 - [Shared-checkout Git](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md): why direct Git operations are unsafe on managed worktrees and how checkout/remote handling works.

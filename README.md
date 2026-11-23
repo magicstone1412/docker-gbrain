@@ -10,13 +10,13 @@ This repository contains the image build and the runtime entrypoint. The checked
 - `entrypoint.sh` — database initialization, embedding configuration, brain-repository setup, sync/embed jobs, optional autopilot, job worker, and the foreground MCP server.
 - `docker-compose.yml` — managed-mode deployment template using the published `skywirex/gbrain:latest` image.
 - `GBRAIN_VERSION` — upstream tag used by CI (`v0.60.765.0` currently).
-- `docs/` — deployment guide, brain Q&A (syncing and recovery), and glossary, in English (`docs/en/`) and Vietnamese (`docs/vi/`).
+- `docs/` — deployment guide, brain operations note (syncing and recovery), and glossary, in English (`docs/en/`) and Vietnamese (`docs/vi/`).
 
 ## Documentation
 
 - [Deployment guide (EN)](docs/en/deployment-guide.md) / [Deployment guide (VI)](docs/vi/deployment-guide.md) — build, run, embedding providers, runtime variables, classic vs managed modes, startup sequence, and security notes.
-- [Brain sync & recovery Q&A (EN)](docs/en/question-and-answer.md) / [Brain sync & recovery Q&A (VI)](docs/vi/question-and-answer.md) — what happens when the brain repo is committed from another machine, how `GBRAIN_REFRESH_UPSTREAM` fits in, and how to restore the brain from its Git repository after a failure.
-- [Glossary (EN)](docs/en/glossary.md) / [Glossary (VI)](docs/vi/glossary.md) — short definitions of the durability, writer status, managed vs classic, and admin-state terms used in the guide and Q&A.
+- [Brain operations note: sync & recovery (EN)](docs/en/operation-note.md) / [Ghi chú vận hành brain: đồng bộ & phục hồi (VI)](docs/vi/operation-note.md) — operating procedures for commits from another machine, `GBRAIN_REFRESH_UPSTREAM`, and restoring a brain from its Git repository after a failure.
+- [Glossary (EN)](docs/en/glossary.md) / [Glossary (VI)](docs/vi/glossary.md) — short definitions of the durability, writer status, managed vs classic, and admin-state terms used in the guide and operations note.
 
 ## Requirements
 
